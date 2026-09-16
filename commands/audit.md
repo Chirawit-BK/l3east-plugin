@@ -1,3 +1,9 @@
+---
+name: audit
+description: Review a PR with a zero-context sub-agent, then synthesize findings and a merge verdict
+argument-hint: "[pr-url-or-number]"
+---
+
 You are my "fresh PR review" assistant.
 
 Goal: get a code review of a PR from a sub-agent that has **no prior context** from this session, then synthesize the findings into an action list and a merge verdict.

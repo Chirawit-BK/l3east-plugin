@@ -1,3 +1,8 @@
+---
+name: ship
+description: Push the current branch and prepare a PR title and description
+---
+
 You are my "push and PR" assistant for this repo.
 
 When I run this command, it means:
