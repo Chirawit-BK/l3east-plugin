@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -26,6 +27,8 @@ def collect_hooks(cfg, source: str, hooks: dict) -> None:
                 if not isinstance(g, dict):
                     continue
                 matcher = g.get("matcher") or "*"
+                if not isinstance(matcher, str):  # a list or object matcher must still be usable as a dict key
+                    matcher = json.dumps(matcher, sort_keys=True)
                 for h in g.get("hooks") or []:
                     if not isinstance(h, dict):
                         continue

@@ -21,9 +21,15 @@ SYNCED_NAMESPACE = "anthropic-skills"  # the desktop app lists ~/.claude/skills/
 PLUGIN_NAME_RE = re.compile(r"^[A-Za-z0-9][\w.-]*$")
 
 
-def plugin_namespace(root: Path, fallback: str) -> str:
+def plugin_namespace(root: Path, fallback: str, warnings: list[str]) -> str:
     """Slash prefix of a plugin root: plugin.json `name` when present and sane, else the fallback."""
-    name = (read_json(root / ".claude-plugin" / "plugin.json") or {}).get("name")
+    pj_path = root / ".claude-plugin" / "plugin.json"
+    pj = read_json(pj_path)
+    if not isinstance(pj, dict):
+        if pj_path.is_file():
+            warnings.append(f"plugin.json is not a JSON object, namespace falls back to {fallback}: {pj_path}")
+        return fallback
+    name = pj.get("name")
     return name.strip() if isinstance(name, str) and PLUGIN_NAME_RE.match(name.strip()) else fallback
 
 
@@ -32,8 +38,12 @@ def _backtick_mention(tok: str) -> bool:
     return len(tok) >= 5 or "-" in tok or ":" in tok
 
 
-def _entry(md: Path, source: str, slash: str, kind: str) -> dict:
-    text = md.read_text(encoding="utf-8", errors="replace")
+def _entry(md: Path, source: str, slash: str, kind: str, warnings: list[str]) -> dict | None:
+    try:
+        text = md.read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeError) as exc:
+        warnings.append(f"unreadable, skipped: {md} ({type(exc).__name__})")
+        return None
     meta, body = parse_frontmatter(text)
     desc = str(meta.get("description", "")).strip()
     if meta.get("when_to_use"):
@@ -71,8 +81,11 @@ class Scanner:
         self.scanned: list[str] = []
         self.warnings: list[str] = []
 
-    def add(self, entry: dict) -> None:
-        if entry["path"] in self.seen:
+    def add(self, md: Path, source: str, slash: str, kind: str) -> None:
+        if str(md) in self.seen:
+            return
+        entry = _entry(md, source, slash, kind, self.warnings)
+        if entry is None:
             return
         self.seen.add(entry["path"])
         self.entries.append(entry)
@@ -82,17 +95,17 @@ class Scanner:
             return
         self.scanned.append(str(root))
         for md in sorted(root.glob("*/SKILL.md")):
-            self.add(_entry(md, source, f"/{prefix}{md.parent.name}", "skill"))
+            self.add(md, source, f"/{prefix}{md.parent.name}", "skill")
 
     def commands_dir(self, root: Path, source: str, prefix: str) -> None:
         if not root.is_dir():
             return
         self.scanned.append(str(root))
         for md in sorted(root.glob("*.md")):
-            self.add(_entry(md, source, f"/{prefix}{md.stem}", "command"))
+            self.add(md, source, f"/{prefix}{md.stem}", "command")
 
     def plugin_root(self, root: Path, source: str, short: str) -> None:
-        short = plugin_namespace(root, short)
+        short = plugin_namespace(root, short, self.warnings)
         self.skills_dir(root / "skills", source, f"{short}:")
         self.commands_dir(root / "commands", source, f"{short}:")
 
@@ -103,12 +116,27 @@ class Scanner:
         self.scanned.append(str(root))
         for d in sorted(p for p in root.iterdir() if p.is_dir()):
             if (d / "SKILL.md").is_file():
-                self.add(_entry(d / "SKILL.md", "personal", f"/{d.name}", "skill"))
+                self.add(d / "SKILL.md", "personal", f"/{d.name}", "skill")
             elif (d / "skills").is_dir():
                 self.plugin_root(d, f"plugin:{d.name}@skills-dir", d.name)
             elif d.name == "synced":
-                for sess in sorted(p for p in d.iterdir() if p.is_dir()):
-                    self.skills_dir(sess, f"plugin:{SYNCED_NAMESPACE}@synced", f"{SYNCED_NAMESPACE}:")
+                self.synced(d)
+
+    def synced(self, root: Path) -> None:
+        """Session dirs can hold copies of the same skill; inventory each name once, newest SKILL.md by mtime."""
+        newest: dict[str, tuple[float, Path]] = {}
+        for sess in sorted(p for p in root.iterdir() if p.is_dir()):
+            self.scanned.append(str(sess))
+            for md in sorted(sess.glob("*/SKILL.md")):
+                try:
+                    mtime = md.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                name = md.parent.name
+                if name not in newest or mtime > newest[name][0]:
+                    newest[name] = (mtime, md)
+        for name in sorted(newest):
+            self.add(newest[name][1], f"plugin:{SYNCED_NAMESPACE}@synced", f"/{SYNCED_NAMESPACE}:{name}", "skill")
 
 
 def main() -> int:
@@ -151,10 +179,13 @@ def main() -> int:
 
     for x in a.extra:
         root = Path(x).resolve()
+        before = len(sc.entries)
         if (root / "SKILL.md").is_file():
-            sc.add(_entry(root / "SKILL.md", "candidate", f"/{root.name}", "skill"))
+            sc.add(root / "SKILL.md", "candidate", f"/{root.name}", "skill")
         else:
             sc.plugin_root(root, f"candidate:{root.name}", root.name)
+        if len(sc.entries) == before:
+            sc.warnings.append(f"extra root yielded no skills or commands: {root}")
 
     names = {e["name"] for e in sc.entries}
     slash_to_name = {s.lstrip("/"): e["name"] for e in sc.entries for s in e["slash_names"]}

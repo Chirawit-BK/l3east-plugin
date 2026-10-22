@@ -132,6 +132,14 @@ class HooksMcpTests(unittest.TestCase):
         self.assertEqual(by_name["ws"]["key"], "url:wss://host/mcp")
         self.assertIn("postgresql://db.internal:5432/app", by_name["pg"]["key"])
 
+    def test_list_matcher_is_stringified(self):
+        settings = {"hooks": {"PreToolUse": [{"matcher": ["Bash", "Edit"], "hooks": [{"type": "command", "command": "echo hi"}]}]}}
+        with tempfile.TemporaryDirectory() as d:
+            data, _ = self.run_temp(Path(d), {}, settings)
+        row = data["hooks"]["PreToolUse"][0]
+        self.assertIsInstance(row["matcher"], str)
+        self.assertIn("Bash", row["matcher"])
+
     def test_empty_install_path_is_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)

@@ -98,5 +98,78 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(cmd["mentions_skills"], ["commit-helper", "dev"])
 
 
+    def run_temp(self, tmp: Path, *extra: str) -> dict:
+        """inventory.py against a temp home and project, empty plugin list."""
+        home, project = tmp / "home", tmp / "project"
+        home.mkdir(exist_ok=True)
+        project.mkdir(exist_ok=True)
+        pl = tmp / "pl.json"
+        pl.write_text("[]", encoding="utf-8")
+        out = tmp / "inventory.json"
+        res = run_script("inventory.py", "--project", str(project), "--claude-home", str(home), "--plugin-list", str(pl), "--out", str(out), *extra)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return load(out)
+
+    @staticmethod
+    def write_skill(d: Path, name: str) -> Path:
+        d.mkdir(parents=True, exist_ok=True)
+        md = d / "SKILL.md"
+        md.write_text(f"---\nname: {name}\ndescription: Use when testing {name}. Not for anything else.\n---\n\nBody.\n", encoding="utf-8")
+        return md
+
+    def test_non_object_plugin_json_falls_back_with_warning(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            cand = tmp / "oddcand"
+            (cand / ".claude-plugin").mkdir(parents=True)
+            (cand / ".claude-plugin" / "plugin.json").write_text('["oops"]', encoding="utf-8")
+            self.write_skill(cand / "skills" / "odd-skill", "odd-skill")
+            inv = self.run_temp(tmp, "--extra", str(cand))
+        odd = [e for e in inv["entries"] if e["name"] == "odd-skill"]
+        self.assertEqual(len(odd), 1)
+        self.assertEqual(odd[0]["source"], "candidate:oddcand")
+        self.assertEqual(odd[0]["slash_names"], ["/oddcand:odd-skill"])
+        self.assertTrue(any("plugin.json" in w for w in inv["warnings"]))
+
+    def test_empty_extra_root_warns(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            empty = tmp / "empty"
+            empty.mkdir()
+            inv = self.run_temp(tmp, "--extra", str(empty))
+        self.assertIn(f"extra root yielded no skills or commands: {empty.resolve()}", inv["warnings"])
+
+    def test_synced_copies_inventoried_once_newest_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            synced = tmp / "home" / "skills" / "synced"
+            old = self.write_skill(synced / "sess-a" / "docs", "docs")
+            new = self.write_skill(synced / "sess-b" / "docs", "docs")
+            os.utime(old, (2_000_000_000, 2_000_000_000))  # sess-a sorts first and is the newer copy
+            os.utime(new, (1_000_000_000, 1_000_000_000))
+            inv = self.run_temp(tmp)
+        docs = [e for e in inv["entries"] if e["name"] == "docs"]
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0]["path"], str(old.resolve()))
+        self.assertEqual(docs[0]["slash_names"], ["/anthropic-skills:docs"])
+        self.assertNotIn("docs", inv["same_name"])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can read a chmod 000 file")
+    def test_unreadable_skill_is_skipped_with_warning(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            locked = self.write_skill(tmp / "home" / "skills" / "locked", "locked")
+            self.write_skill(tmp / "home" / "skills" / "fine", "fine")
+            locked.chmod(0)
+            try:
+                inv = self.run_temp(tmp)
+            finally:
+                locked.chmod(0o644)
+        names = {e["name"] for e in inv["entries"]}
+        self.assertIn("fine", names)
+        self.assertNotIn("locked", names)
+        self.assertTrue(any("unreadable" in w and "locked" in w for w in inv["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()
