@@ -97,6 +97,41 @@ class HooksMcpTests(unittest.TestCase):
         dup = [x for x in data["mcp_duplicates"] if x["key"] == "url:https://h/mcp?token=***"]
         self.assertEqual(sorted(e["name"] for e in dup[0]["entries"]), ["tok_a", "tok_b"])
 
+    def run_temp(self, tmp: Path, servers: dict, project_settings: dict | None = None) -> tuple[dict, str]:
+        """hooks_mcp.py against a temp home and project only; never the real ~/.claude.json."""
+        home, project = tmp / "home", tmp / "project"
+        (project / ".claude").mkdir(parents=True)
+        home.mkdir()
+        (home / ".claude.json").write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
+        if project_settings is not None:
+            (project / ".claude" / "settings.json").write_text(json.dumps(project_settings), encoding="utf-8")
+        pl = tmp / "pl.json"
+        pl.write_text("[]", encoding="utf-8")
+        out = tmp / "hooks_mcp.json"
+        res = run_script("hooks_mcp.py", "--project", str(project), "--claude-home", str(home), "--plugin-list", str(pl), "--out", str(out))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return load(out), out.read_text(encoding="utf-8")
+
+    def test_credentials_in_any_scheme_env_names_and_curl_user_are_masked(self):
+        jwt = "eyJhbGciOi.eyJzdWIi.sig123"
+        servers = {
+            "pg": {"command": "npx", "args": ["-y", "@x/server-postgres", "postgresql://admin:hunter2pw@db.internal:5432/app"]},
+            "ws": {"type": "sse", "url": "wss://bob:shortpw@host/mcp", "headers": {"Authorization": f"Bearer {jwt}"}},
+        }
+        settings = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": "curl -su admin:pw123 https://h; PGPASSWORD=abcsecret psql"},
+            {"type": "command", "command": f'curl -H "Authorization: Bearer {jwt}" https://h'},
+        ]}]}}
+        with tempfile.TemporaryDirectory() as d:
+            data, raw = self.run_temp(Path(d), servers, settings)
+        for leak in ("hunter2pw", "shortpw", "pw123", "abcsecret", "eyJhbGciOi"):
+            self.assertFalse(leak in raw, f"secret starting {leak[:3]!r} leaked")  # never echo the raw output
+        by_name = {m["name"]: m for m in data["mcp"]}
+        self.assertTrue(by_name["pg"]["has_plaintext_secret"])
+        self.assertTrue(by_name["ws"]["has_plaintext_secret"])
+        self.assertEqual(by_name["ws"]["key"], "url:wss://host/mcp")
+        self.assertIn("postgresql://db.internal:5432/app", by_name["pg"]["key"])
+
     def test_empty_install_path_is_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)

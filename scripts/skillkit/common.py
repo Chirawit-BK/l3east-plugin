@@ -15,15 +15,18 @@ from pathlib import Path
 
 MASK = "***"
 DESC_LIMIT = 1536
-SECRET_KEY_RE = re.compile(r"(?i)(token|secret|passw(?:or)?d|api[-_]?key|authorization|private[-_]?key)")
+SECRET_KEY_RE = re.compile(r"(?i)(token|secret|passw(?:or)?d|pwd|api[-_]?key|authorization|private[-_]?key)")
 SECRET_VALUE_RE = re.compile(r"^[A-Za-z0-9_\-=+]{32,}$")
-# Free-text masking. The keyword lookbehind is alnum-only (not \b) so env-style names such as
-# GITHUB_TOKEN=... still match; quotes count as token boundaries so a quoted blob is still masked.
-_SECRET_WORDS = r"(?:token|secret|passw(?:or)?d|api[-_]?key|private[-_]?key)"
-_TEXT_URL_RE = re.compile(r"""(?i)(https?://[^\s"'<>]+)""")
+JWT_RE = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+")
+USERINFO_RE = re.compile(r"://[^/\s@]+:[^/\s@]+@")
+# Free-text masking. A secret word may sit inside a longer env-style name (PGPASSWORD, DB_PWD,
+# GITHUB_TOKEN); the whole name is kept and the value masked. Quotes count as token boundaries.
+_SECRET_WORDS = r"(?:token|secret|passw(?:or)?d|pwd|api[-_]?key|private[-_]?key)"
+_TEXT_URL_RE = re.compile(r"""(?i)\b([a-z][a-z0-9+.\-]*://[^\s"'<>]+)""")  # any scheme: postgresql://, wss://, ...
 _TEXT_BEARER_RE = re.compile(r"(?i)\bbearer\s+\S+")
 _TEXT_AUTH_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(authorization)\b\s*[=:]\s*(?:\w+\s+)?\S+")
-_TEXT_KEYVAL_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(" + _SECRET_WORDS + r")\b\s*[=:]\s*\S+")
+_TEXT_USER_RE = re.compile(r"(?<![\w-])(-[A-Za-z]*u|--user)(\s+|=)(\S*:\S+)")  # curl -u / -su / --user[=] user:pass
+_TEXT_KEYVAL_RE = re.compile(r"(?i)([A-Za-z0-9_]*" + _SECRET_WORDS + r"[A-Za-z0-9_]*)\s*[=:]\s*\S+")
 _TEXT_FLAG_RE = re.compile(r"(?i)(?<![\w-])(--?[\w-]*(?:" + _SECRET_WORDS + r"|authorization)[\w-]*)\s+(\S+)")
 _TEXT_TOKEN_RE = re.compile(r"[^\s=:,\"']+")
 
@@ -133,6 +136,11 @@ def mask_strings(obj):
     return mask_text(obj) if isinstance(obj, str) else obj
 
 
+def _blob(s: str) -> bool:
+    """A long token-like value or a JWT."""
+    return bool(SECRET_VALUE_RE.match(s) or JWT_RE.search(s))
+
+
 def mask_url(url: str) -> str:
     """Drop userinfo and fragment; mask blob path segments and secret query values; keep other params."""
     try:
@@ -140,13 +148,13 @@ def mask_url(url: str) -> str:
         host = parts.netloc.rpartition("@")[2]
     except ValueError:
         return MASK
-    path = "/".join(MASK if SECRET_VALUE_RE.match(urllib.parse.unquote(seg)) else seg for seg in parts.path.split("/"))
+    path = "/".join(MASK if _blob(urllib.parse.unquote(seg)) else seg for seg in parts.path.split("/"))
     query = []
     for pair in parts.query.split("&") if parts.query else []:
         k, sep, v = pair.partition("=")
-        if v and (SECRET_KEY_RE.search(urllib.parse.unquote(k)) or SECRET_VALUE_RE.match(urllib.parse.unquote(v))):
+        if v and (SECRET_KEY_RE.search(urllib.parse.unquote(k)) or _blob(urllib.parse.unquote(v))):
             v = MASK
-        elif not sep and SECRET_VALUE_RE.match(urllib.parse.unquote(k)):
+        elif not sep and _blob(urllib.parse.unquote(k)):
             k = MASK
         query.append(k + sep + v)
     return urllib.parse.urlunsplit((parts.scheme, host, path, "&".join(query), ""))
@@ -155,8 +163,10 @@ def mask_url(url: str) -> str:
 def _mask_plain_text(s: str) -> str:
     s = _TEXT_BEARER_RE.sub("bearer ***", s)
     s = _TEXT_AUTH_RE.sub(lambda m: m.group(1) + "=***", s)
+    s = _TEXT_USER_RE.sub(lambda m: m.group(1) + m.group(2)[:1] + MASK, s)
     s = _TEXT_KEYVAL_RE.sub(lambda m: m.group(1) + "=***", s)
     s = _TEXT_FLAG_RE.sub(lambda m: m.group(1) + " " + MASK, s)
+    s = JWT_RE.sub(MASK, s)
     return _TEXT_TOKEN_RE.sub(lambda m: MASK if SECRET_VALUE_RE.match(m.group(0)) else m.group(0), s)
 
 
@@ -166,10 +176,48 @@ def mask_text(s: str) -> str:
     return "".join(mask_url(x) if i % 2 else _mask_plain_text(x) for i, x in enumerate(pieces))
 
 
+def _is_ref(v: str) -> bool:
+    """`${VAR}` anywhere in a value makes it an env reference, not a plaintext secret."""
+    return "${" in v
+
+
+def _secret_pair(name: str, value: str) -> bool:
+    return bool(value) and not _is_ref(value) and bool(SECRET_KEY_RE.search(name))
+
+
+def _plaintext_in_strings(key: str, v) -> bool:
+    """In `url`, `args` or `command`: URL userinfo, a JWT, or a secret-named arg/param with a value."""
+    items = [x for x in (v if isinstance(v, list) else [v]) if isinstance(x, str)]
+    for x in items:
+        if not _is_ref(x) and (USERINFO_RE.search(x) or JWT_RE.search(x)):
+            return True
+    if key == "url":
+        for x in items:
+            try:
+                query = urllib.parse.urlsplit(x).query
+            except ValueError:
+                continue
+            if any(_secret_pair(k, val) for k, val in urllib.parse.parse_qsl(query)):
+                return True
+        return False
+    tokens = [t for x in items for t in (x.split() if key == "command" else [x])]
+    prev = None
+    for t in tokens:
+        name, sep, val = t.partition("=")
+        if sep and _secret_pair(name, val):  # --token=abc, API_KEY=abc
+            return True
+        if prev is not None and not re.search(r"[=:]", prev) and _secret_pair(prev, t):  # --token abc
+            return True
+        prev = t
+    return False
+
+
 def has_plaintext_secret(obj) -> bool:
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if isinstance(k, str) and SECRET_KEY_RE.search(k) and isinstance(v, str) and v and not v.startswith("${"):
+            if isinstance(k, str) and SECRET_KEY_RE.search(k) and isinstance(v, str) and v and not _is_ref(v):
+                return True
+            if k in ("url", "args", "command") and _plaintext_in_strings(k, v):
                 return True
             if has_plaintext_secret(v):
                 return True

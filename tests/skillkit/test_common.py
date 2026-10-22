@@ -55,6 +55,18 @@ class SecretTests(unittest.TestCase):
         self.assertFalse(common.has_plaintext_secret({"env": {"X_TOKEN": "${X_TOKEN}"}}))
         self.assertFalse(common.has_plaintext_secret({"url": "https://a"}))
 
+    def test_env_interpolation_anywhere_is_a_reference(self):
+        self.assertFalse(common.has_plaintext_secret({"headers": {"Authorization": "Bearer ${TOKEN}"}}))
+        self.assertFalse(common.has_plaintext_secret({"url": "postgres://${U}:${P}@h/db"}))
+        self.assertFalse(common.has_plaintext_secret({"args": ["--token", "${TOKEN}"]}))
+
+    def test_plaintext_userinfo_jwt_and_secret_arg(self):
+        self.assertTrue(common.has_plaintext_secret({"args": ["x", "mysql://u:pw@h/db"]}))
+        self.assertTrue(common.has_plaintext_secret({"url": "wss://u:pw@h/mcp"}))
+        self.assertTrue(common.has_plaintext_secret({"command": "srv eyJa.eyJb.sig"}))
+        self.assertTrue(common.has_plaintext_secret({"args": ["--api-key", "k2"]}))
+        self.assertFalse(common.has_plaintext_secret({"args": ["--verbose", "x"], "url": "https://h/mcp"}))
+
 
 class MaskTextTests(unittest.TestCase):
     def test_url_query_key(self):
@@ -87,6 +99,29 @@ class MaskTextTests(unittest.TestCase):
         out = common.mask_text("srv --token shortval --verbose")
         self.assertNotIn("shortval", out)
         self.assertIn("--verbose", out)
+
+    def test_userinfo_in_any_scheme(self):
+        for scheme in ("postgresql", "mysql", "mongodb", "redis", "amqp", "wss"):
+            out = common.mask_text(f"run {scheme}://admin:pwq1@db:1/x --flag")
+            self.assertNotIn("pwq1", out, scheme)
+            self.assertIn(f"{scheme}://db:1/x", out)
+
+    def test_env_style_names_with_alnum_prefix(self):
+        out = common.mask_text("PGPASSWORD=pwq1 psql; DB_PWD=pwq2 x; MYSECRETKEY: pwq3")
+        for v in ("pwq1", "pwq2", "pwq3"):
+            self.assertNotIn(v, out)
+        self.assertIn("PGPASSWORD=***", out)
+        self.assertIn("psql", out)
+
+    def test_curl_user_forms(self):
+        for cmd in ("curl -u admin:pwq1 h", "curl -su admin:pwq1 h", "curl --user admin:pwq1 h", "curl --user=admin:pwq1 h"):
+            self.assertNotIn("pwq1", common.mask_text(cmd), cmd)
+        self.assertEqual(common.mask_text("python3 -u script.py"), "python3 -u script.py")
+
+    def test_jwt(self):
+        out = common.mask_text("srv --header x eyJa1.eyJb2.sig3 end")
+        self.assertNotIn("eyJa1", out)
+        self.assertIn("end", out)
 
     def test_url_inside_text_goes_through_mask_url(self):
         out = common.mask_text("curl https://u:pwsecret@h/m?x=1 -o f")
