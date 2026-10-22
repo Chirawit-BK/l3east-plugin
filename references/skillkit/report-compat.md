@@ -1,6 +1,8 @@
 # skill-compat report template
 
-Print in chat and also write to `~/.claude/skill-compat/<YYYY-MM-DD>-<candidate>.md`.
+Print in chat and also write to `~/.claude/skill-compat/<YYYY-MM-DD>-<candidate>/report.md` (the scan JSON sits beside it).
+
+The outer code fence below is the template wrapper and is not part of the written file.
 
 ```
 # skill-compat — {{candidate}} ({{date}})
@@ -29,4 +31,5 @@ Adds: {{n_skills}} skills, {{n_commands}} commands, {{n_hooks}} hooks, {{n_mcp}}
 
 ## Caveats
 Same as skill-health: estimates, unofficial transcript parsing.
+Never print a secret value; name the key only.
 ```
