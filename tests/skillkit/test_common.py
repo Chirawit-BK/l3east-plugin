@@ -79,6 +79,52 @@ class MaskTextTests(unittest.TestCase):
     def test_plain_command_unchanged(self):
         self.assertEqual(common.mask_text("pnpm lint"), "pnpm lint")
 
+    def test_basic_auth_header(self):
+        out = common.mask_text('curl -H "Authorization: Basic dXNlcjpwdw=="')
+        self.assertNotIn("dXNlcjpwdw", out)
+
+    def test_dashed_flag_then_short_value(self):
+        out = common.mask_text("srv --token shortval --verbose")
+        self.assertNotIn("shortval", out)
+        self.assertIn("--verbose", out)
+
+    def test_url_inside_text_goes_through_mask_url(self):
+        out = common.mask_text("curl https://u:pwsecret@h/m?x=1 -o f")
+        self.assertNotIn("pwsecret", out)
+        self.assertIn("https://h/m?x=1", out)
+
+
+class MaskUrlTests(unittest.TestCase):
+    BLOB = "Zq9Xw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0FeDcBa98765"
+
+    def test_drops_userinfo_and_fragment(self):
+        out = common.mask_url("https://u:pwsecret@h:8443/m#frag")
+        self.assertEqual(out, "https://h:8443/m")
+
+    def test_blob_query_value_with_following_param(self):
+        out = common.mask_url(f"https://h/m?sig={self.BLOB}&x=1")
+        self.assertNotIn(self.BLOB, out)
+        self.assertEqual(out, "https://h/m?sig=***&x=1")
+
+    def test_blob_path_segment(self):
+        out = common.mask_url(f"https://h/mcp/{self.BLOB}/sse")
+        self.assertEqual(out, "https://h/mcp/***/sse")
+
+    def test_secret_key_collapses_and_plain_values_stay_distinct(self):
+        self.assertEqual(common.mask_url("https://h/m?token=A"), common.mask_url("https://h/m?token=B"))
+        self.assertEqual(common.mask_url("https://h/m?token=A"), "https://h/m?token=***")
+        self.assertNotEqual(common.mask_url("https://h/m?workspace=a"), common.mask_url("https://h/m?workspace=b"))
+
+
+class MaskStringsTests(unittest.TestCase):
+    def test_masks_value_after_secret_named_arg(self):
+        out = common.mask_strings({"command": "srv", "args": ["--token", "shortval", "--api-key", "k2", "-v", "plain"]})
+        self.assertEqual(out["args"], ["--token", "***", "--api-key", "***", "-v", "plain"])
+
+    def test_self_contained_arg_does_not_mask_next(self):
+        out = common.mask_strings(["--token=abc", "--verbose"])
+        self.assertEqual(out, ["--token=***", "--verbose"])
+
 
 class MiscTests(unittest.TestCase):
     def test_project_slug(self):

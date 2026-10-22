@@ -10,6 +10,7 @@ import math
 import os
 import re
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 MASK = "***"
@@ -18,8 +19,12 @@ SECRET_KEY_RE = re.compile(r"(?i)(token|secret|passw(?:or)?d|api[-_]?key|authori
 SECRET_VALUE_RE = re.compile(r"^[A-Za-z0-9_\-=+]{32,}$")
 # Free-text masking. The keyword lookbehind is alnum-only (not \b) so env-style names such as
 # GITHUB_TOKEN=... still match; quotes count as token boundaries so a quoted blob is still masked.
+_SECRET_WORDS = r"(?:token|secret|passw(?:or)?d|api[-_]?key|private[-_]?key)"
+_TEXT_URL_RE = re.compile(r"""(?i)(https?://[^\s"'<>]+)""")
 _TEXT_BEARER_RE = re.compile(r"(?i)\bbearer\s+\S+")
-_TEXT_KEYVAL_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(token|secret|passw(?:or)?d|api[-_]?key|authorization|private[-_]?key)\b\s*[=:]\s*\S+")
+_TEXT_AUTH_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(authorization)\b\s*[=:]\s*(?:\w+\s+)?\S+")
+_TEXT_KEYVAL_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(" + _SECRET_WORDS + r")\b\s*[=:]\s*\S+")
+_TEXT_FLAG_RE = re.compile(r"(?i)(?<![\w-])(--?[\w-]*(?:" + _SECRET_WORDS + r"|authorization)[\w-]*)\s+(\S+)")
 _TEXT_TOKEN_RE = re.compile(r"[^\s=:,\"']+")
 
 
@@ -107,12 +112,59 @@ def mask_secrets(obj):
     return obj
 
 
+def mask_strings(obj):
+    """Apply mask_text to every string in an already mask_secrets'd structure (url, args, command).
+
+    In a list, the item after a secret-named arg such as `--token` or `API_KEY` is masked whole,
+    unless that arg carries its own value (`--token=x`, `Authorization: ...`).
+    """
+    if isinstance(obj, dict):
+        return {k: mask_strings(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        out = []
+        prev = None
+        for x in obj:
+            if isinstance(x, str) and isinstance(prev, str) and SECRET_KEY_RE.search(prev) and not re.search(r"[=:]", prev):
+                out.append(MASK)
+            else:
+                out.append(mask_strings(x))
+            prev = x
+        return out
+    return mask_text(obj) if isinstance(obj, str) else obj
+
+
+def mask_url(url: str) -> str:
+    """Drop userinfo and fragment; mask blob path segments and secret query values; keep other params."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.netloc.rpartition("@")[2]
+    except ValueError:
+        return MASK
+    path = "/".join(MASK if SECRET_VALUE_RE.match(urllib.parse.unquote(seg)) else seg for seg in parts.path.split("/"))
+    query = []
+    for pair in parts.query.split("&") if parts.query else []:
+        k, sep, v = pair.partition("=")
+        if v and (SECRET_KEY_RE.search(urllib.parse.unquote(k)) or SECRET_VALUE_RE.match(urllib.parse.unquote(v))):
+            v = MASK
+        elif not sep and SECRET_VALUE_RE.match(urllib.parse.unquote(k)):
+            k = MASK
+        query.append(k + sep + v)
+    return urllib.parse.urlunsplit((parts.scheme, host, path, "&".join(query), ""))
+
+
+def _mask_plain_text(s: str) -> str:
+    s = _TEXT_BEARER_RE.sub("bearer ***", s)
+    s = _TEXT_AUTH_RE.sub(lambda m: m.group(1) + "=***", s)
+    s = _TEXT_KEYVAL_RE.sub(lambda m: m.group(1) + "=***", s)
+    s = _TEXT_FLAG_RE.sub(lambda m: m.group(1) + " " + MASK, s)
+    return _TEXT_TOKEN_RE.sub(lambda m: MASK if SECRET_VALUE_RE.match(m.group(0)) else m.group(0), s)
+
 
 def mask_text(s: str) -> str:
-    """Mask secrets inside free text: bearer values, key=value secrets and long token-like runs."""
-    s = _TEXT_BEARER_RE.sub("bearer ***", s)
-    s = _TEXT_KEYVAL_RE.sub(lambda m: m.group(1) + "=***", s)
-    return _TEXT_TOKEN_RE.sub(lambda m: MASK if SECRET_VALUE_RE.match(m.group(0)) else m.group(0), s)
+    """Mask secrets inside free text: URLs via mask_url, auth headers, key=value and --flag secrets, long blobs."""
+    pieces = _TEXT_URL_RE.split(s)
+    return "".join(mask_url(x) if i % 2 else _mask_plain_text(x) for i, x in enumerate(pieces))
+
 
 def has_plaintext_secret(obj) -> bool:
     if isinstance(obj, dict):

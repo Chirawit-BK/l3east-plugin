@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import claude_home, has_plaintext_secret, load_plugin_list, mask_secrets, mask_text, read_json, write_json  # noqa: E402
+from common import claude_home, has_plaintext_secret, load_plugin_list, mask_secrets, mask_strings, mask_text, mask_url, read_json, write_json  # noqa: E402
 
 PROJECT_TOOL_WORDS = ("pnpm", "npm ", "npx ", "yarn", "bun ", "pytest", "cargo ", "go test", "make ", "gradle", "mvn ")
 
@@ -42,15 +42,6 @@ def collect_hooks(cfg, source: str, hooks: dict) -> None:
         )
 
 
-def mask_strings(obj):
-    """Apply mask_text to every string left in an already mask_secrets'd structure (url, args, command)."""
-    if isinstance(obj, dict):
-        return {k: mask_strings(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [mask_strings(x) for x in obj]
-    return mask_text(obj) if isinstance(obj, str) else obj
-
-
 def collect_mcp(cfg, source: str, mcp: list) -> None:
     servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
     if not isinstance(servers, dict):
@@ -61,7 +52,8 @@ def collect_mcp(cfg, source: str, mcp: list) -> None:
         masked = mask_strings(mask_secrets(spec))
         if spec.get("url"):
             kind = spec.get("type") or "http"
-            key = "url:" + mask_text(str(spec["url"]).split("?", 1)[0].rstrip("/"))
+            base, sep, query = mask_url(str(spec["url"])).partition("?")
+            key = "url:" + base.rstrip("/") + sep + query
         else:
             kind = spec.get("type") or "stdio"
             key = "cmd:" + mask_text(" ".join([str(masked.get("command", ""))] + [str(x) for x in masked.get("args") or []]))
