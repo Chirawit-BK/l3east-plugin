@@ -90,7 +90,7 @@ def mask_secrets(obj):
         for k, v in obj.items():
             if isinstance(k, str) and k in ("env", "headers") and isinstance(v, dict):
                 out[k] = {ek: MASK for ek in v}
-            elif isinstance(k, str) and SECRET_KEY_RE.search(k) and isinstance(v, (str, int, float)):
+            elif isinstance(k, str) and SECRET_KEY_RE.search(k) and v is not None:
                 out[k] = MASK
             else:
                 out[k] = mask_secrets(v)

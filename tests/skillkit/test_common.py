@@ -44,6 +44,12 @@ class SecretTests(unittest.TestCase):
         self.assertEqual(masked["url"], "https://example.com/mcp")
         self.assertEqual(cfg["env"]["JIRA_API_TOKEN"], "abc")  # input untouched
 
+    def test_masks_list_and_dict_under_secret_key(self):
+        masked = common.mask_secrets({"tokens": ["abc"], "authorization": {"value": "x"}, "password": None})
+        self.assertEqual(masked["tokens"], "***")
+        self.assertEqual(masked["authorization"], "***")
+        self.assertIsNone(masked["password"])
+
     def test_has_plaintext_secret(self):
         self.assertTrue(common.has_plaintext_secret({"env": {"X_TOKEN": "abc"}}))
         self.assertFalse(common.has_plaintext_secret({"env": {"X_TOKEN": "${X_TOKEN}"}}))
