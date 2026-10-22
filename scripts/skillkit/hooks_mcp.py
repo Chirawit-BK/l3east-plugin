@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import claude_home, has_plaintext_secret, load_plugin_list, mask_secrets, read_json, write_json  # noqa: E402
+from common import claude_home, has_plaintext_secret, load_plugin_list, mask_secrets, mask_text, read_json, write_json  # noqa: E402
 
 PROJECT_TOOL_WORDS = ("pnpm", "npm ", "npx ", "yarn", "bun ", "pytest", "cargo ", "go test", "make ", "gradle", "mvn ")
 
@@ -33,13 +33,22 @@ def collect_hooks(cfg, source: str, hooks: dict) -> None:
                         "source": source,
                         "matcher": matcher,
                         "type": h.get("type", "command"),
-                        "command": str(h.get("command") or h.get("module") or h.get("prompt") or ""),
+                        "command": mask_text(str(h.get("command") or h.get("module") or h.get("prompt") or "")),
                     })
     mods = cfg.get("modules")
     if isinstance(mods, list):
         hooks.setdefault("(mod modules)", []).extend(
-            {"source": source, "matcher": "*", "type": "module", "command": str(m)} for m in mods
+            {"source": source, "matcher": "*", "type": "module", "command": mask_text(str(m))} for m in mods
         )
+
+
+def mask_strings(obj):
+    """Apply mask_text to every string left in an already mask_secrets'd structure (url, args, command)."""
+    if isinstance(obj, dict):
+        return {k: mask_strings(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [mask_strings(x) for x in obj]
+    return mask_text(obj) if isinstance(obj, str) else obj
 
 
 def collect_mcp(cfg, source: str, mcp: list) -> None:
@@ -49,19 +58,20 @@ def collect_mcp(cfg, source: str, mcp: list) -> None:
     for name, spec in servers.items():
         if not isinstance(spec, dict):
             continue
+        masked = mask_strings(mask_secrets(spec))
         if spec.get("url"):
             kind = spec.get("type") or "http"
-            key = "url:" + str(spec["url"]).rstrip("/")
+            key = "url:" + mask_text(str(spec["url"]).split("?", 1)[0].rstrip("/"))
         else:
             kind = spec.get("type") or "stdio"
-            key = "cmd:" + " ".join([str(spec.get("command", ""))] + [str(x) for x in spec.get("args") or []])
+            key = "cmd:" + mask_text(" ".join([str(masked.get("command", ""))] + [str(x) for x in masked.get("args") or []]))
         mcp.append({
             "name": str(name),
             "source": source,
             "kind": kind,
             "key": key,
             "has_plaintext_secret": has_plaintext_secret(spec),
-            "spec": mask_secrets(spec),
+            "spec": masked,
         })
 
 

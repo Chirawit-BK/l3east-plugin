@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,39 @@ class HooksMcpTests(unittest.TestCase):
         self.assertIn("candidate:candidate", ov["sources"])
         dup = data["mcp_duplicates"][0]
         self.assertEqual(len(dup["entries"]), 3)
+
+
+    def test_url_query_and_hook_command_are_masked(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            home = tmp / "home"
+            project = tmp / "project"
+            home.mkdir()
+            project.mkdir()
+            (home / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+                {"matcher": "*", "hooks": [{"type": "command", "command": 'curl -H "Authorization: Bearer LEAKME2"'}]},
+            ]}}), encoding="utf-8")
+            (home / ".claude.json").write_text(json.dumps({"mcpServers": {
+                "a": {"type": "http", "url": "https://h/mcp?token=LEAKME1234567890abcdefghijklmnopqrs"},
+                "b": {"type": "http", "url": "https://h/mcp"},
+            }}), encoding="utf-8")
+            plugin_list = tmp / "plugin-list.json"
+            plugin_list.write_text("[]", encoding="utf-8")
+            out = tmp / "hooks_mcp.json"
+            res = run_script(
+                "hooks_mcp.py",
+                "--project", str(project),
+                "--claude-home", str(home),
+                "--plugin-list", str(plugin_list),
+                "--out", str(out),
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            raw = out.read_text(encoding="utf-8")
+            data = load(out)
+        self.assertNotIn("LEAKME", raw)
+        dup = [x for x in data["mcp_duplicates"] if x["key"] == "url:https://h/mcp"]
+        self.assertEqual(len(dup), 1)
+        self.assertEqual(sorted(e["name"] for e in dup[0]["entries"]), ["a", "b"])
 
 
 if __name__ == "__main__":

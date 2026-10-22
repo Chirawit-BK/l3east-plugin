@@ -16,6 +16,11 @@ MASK = "***"
 DESC_LIMIT = 1536
 SECRET_KEY_RE = re.compile(r"(?i)(token|secret|passw(?:or)?d|api[-_]?key|authorization|private[-_]?key)")
 SECRET_VALUE_RE = re.compile(r"^[A-Za-z0-9_\-=+]{32,}$")
+# Free-text masking. The keyword lookbehind is alnum-only (not \b) so env-style names such as
+# GITHUB_TOKEN=... still match; quotes count as token boundaries so a quoted blob is still masked.
+_TEXT_BEARER_RE = re.compile(r"(?i)\bbearer\s+\S+")
+_TEXT_KEYVAL_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(token|secret|passw(?:or)?d|api[-_]?key|authorization|private[-_]?key)\b\s*[=:]\s*\S+")
+_TEXT_TOKEN_RE = re.compile(r"[^\s=:,\"']+")
 
 
 def claude_home() -> Path:
@@ -101,6 +106,13 @@ def mask_secrets(obj):
         return MASK
     return obj
 
+
+
+def mask_text(s: str) -> str:
+    """Mask secrets inside free text: bearer values, key=value secrets and long token-like runs."""
+    s = _TEXT_BEARER_RE.sub("bearer ***", s)
+    s = _TEXT_KEYVAL_RE.sub(lambda m: m.group(1) + "=***", s)
+    return _TEXT_TOKEN_RE.sub(lambda m: MASK if SECRET_VALUE_RE.match(m.group(0)) else m.group(0), s)
 
 def has_plaintext_secret(obj) -> bool:
     if isinstance(obj, dict):

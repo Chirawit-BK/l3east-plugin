@@ -56,6 +56,30 @@ class SecretTests(unittest.TestCase):
         self.assertFalse(common.has_plaintext_secret({"url": "https://a"}))
 
 
+class MaskTextTests(unittest.TestCase):
+    def test_url_query_key(self):
+        out = common.mask_text("https://x/mcp?api_key=abc&v=1")
+        self.assertIn("api_key=***", out)
+        self.assertNotIn("abc", out)
+
+    def test_bearer_header(self):
+        out = common.mask_text('curl -H "Authorization: Bearer tok123"')
+        self.assertNotIn("tok123", out)
+
+    def test_long_blob_in_args(self):
+        blob = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"
+        out = common.mask_text(f"server --flag {blob} --other x")
+        self.assertNotIn(blob, out)
+        self.assertIn("***", out)
+
+    def test_env_style_name_prefix(self):
+        out = common.mask_text("GITHUB_TOKEN=ghx123 run")
+        self.assertNotIn("ghx123", out)
+
+    def test_plain_command_unchanged(self):
+        self.assertEqual(common.mask_text("pnpm lint"), "pnpm lint")
+
+
 class MiscTests(unittest.TestCase):
     def test_project_slug(self):
         self.assertEqual(common.project_slug("/Users/me/Dev/my app"), "-Users-me-Dev-my-app")
