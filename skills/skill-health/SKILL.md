@@ -55,7 +55,7 @@ Arguments: $ARGUMENTS
 ## If the user says go
 
 Apply only what they name:
-- Routing block: show the diff of `~/.claude/CLAUDE.md` first, then replace the text between `<!-- skillkit:begin -->` and `<!-- skillkit:end -->`, or append the block if the markers are absent.
+- Routing block: show the diff of `~/.claude/CLAUDE.md` first, then replace the text between `<!-- skillkit:begin -->` and `<!-- skillkit:end -->`, or append the block if both markers are absent. If only one of the two markers is present, stop and ask the user instead of editing.
 - `enabledPlugins`: edit the project's `.claude/settings.json`, show the diff first.
 - Anything that uninstalls, deletes files or edits MCP registrations stays a printed command for the user.
 

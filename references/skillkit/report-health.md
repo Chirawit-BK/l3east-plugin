@@ -3,6 +3,7 @@
 Write to `~/.claude/skill-health/<YYYY-MM-DD>/report.md`. Fill every `{{...}}`; delete a section only when it has nothing to say and say so in one line.
 
 The outer code fence below is the template wrapper and is not part of the written file.
+Never print a secret value in the report; name the key only.
 
 ```
 # Skill health — {{date}}
@@ -57,5 +58,4 @@ Situations seen in prompts with no matching skill: {{list or "none found"}} → 
 - Token figures are chars/4 estimates.
 - Transcript parsing is unofficial; zero uses can mean "fires without the Skill tool" (hooks, auto-loaded guidance) or "used in a repo outside the window".
 - Project-scoped skills count only inside their repo.
-- Never print a secret value; name the key only.
 ```

@@ -3,6 +3,8 @@
 Print in chat and also write to `~/.claude/skill-compat/<YYYY-MM-DD>-<candidate>/report.md` (the scan JSON sits beside it).
 
 The outer code fence below is the template wrapper and is not part of the written file.
+Never print a secret value in the report; name the key only.
+Caveats always include: token figures are chars/4 estimates; transcript parsing is unofficial (same as skill-health).
 
 ```
 # skill-compat — {{candidate}} ({{date}})
@@ -30,6 +32,5 @@ Adds: {{n_skills}} skills, {{n_commands}} commands, {{n_hooks}} hooks, {{n_mcp}}
 {{proposed_rules, or "none needed"}}
 
 ## Caveats
-Same as skill-health: estimates, unofficial transcript parsing.
-Never print a secret value; name the key only.
+{{caveats: chars/4 estimates, scan warnings, unknown verdicts}}
 ```
