@@ -16,7 +16,7 @@ skill-health drafts this block; the user decides whether it goes into `~/.claude
 Rules for each line:
 - One situation per line, in the form `<situation> → /<skill>`. Add `Never <other>` when a member is being excluded.
 - Name skills exactly as the slash listing shows them (`/l3east:audit`, `superpowers:brainstorming`).
-- Write a line only for a cluster with verdict C or X. R clusters need no line because the loser is disabled.
+- Write a line for a cluster with verdict C or X. An R cluster gets a line only when the loser is a plugin skill that cannot be removed on its own (an exclusion line, listed under the user's commands until applied); otherwise R needs no line because the loser is disabled.
 - Keep the block under 15 lines. If it grows past that, the skill set needs pruning, not more rules.
 - English, because CLAUDE.md on this machine is English.
 
