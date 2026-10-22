@@ -4,4 +4,4 @@
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Skill","input":{"skill":"alpha:smart-commit"}}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"mcp__figma__get_metadata","input":{}}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t5","name":"Bash","input":{"command":"ls"}}]}}
-not json at all
+not json at all but mentions "tool_use"

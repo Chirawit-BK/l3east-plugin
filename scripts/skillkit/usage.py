@@ -30,7 +30,7 @@ def scan_file(path: Path, slug: str, acc: dict, stats: dict) -> None:
             if "<command-name>" in line:
                 for c in CMD_RE.findall(line):
                     bump(acc["slash"], c.strip(), slug)
-            if not line.strip():
+            if '"tool_use"' not in line:
                 continue
             try:
                 rec = json.loads(line)
