@@ -63,9 +63,9 @@ class ClusterTests(unittest.TestCase):
         self.assertFalse(any("name token 'figma'" in r for c in data["clusters"] for r in c["reasons"]))
 
     def test_weak_merge_respects_size_cap(self):
-        # 25 entries share the rare token "zzzz" (DF 25 > 5) so no name-token edge; 3 entries share "qqqq" (DF 3) and do link.
-        entries = [{"name": f"qqqq-{k}", "source": "personal", "description": f"Totally different text {k} alpha beta gamma.", "mentions_skills": [],
-                    "disable_model_invocation": False, "slash_names": [f"/qqqq-{k}"]} for k in ("a", "b", "c")]
+        # 25 identical descriptions (jaccard 1.0, weak) and names with no token of 4+ chars: only the size cap stops one 25-member cluster.
+        entries = [{"name": f"aa-bb-{i:02d}", "source": "personal", "description": "Use when the user wants the same exact thing done. Not for anything else.",
+                    "mentions_skills": [], "disable_model_invocation": False, "slash_names": [f"/aa-bb-{i:02d}"]} for i in range(1, 26)]
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             inv = tmp / "inventory.json"
@@ -74,7 +74,9 @@ class ClusterTests(unittest.TestCase):
             res = run_script("cluster.py", "--inventory", str(inv), "--out", str(out))
             self.assertEqual(res.returncode, 0, res.stderr)
             data = load(out)
-        self.assertEqual([set(c["members"]) for c in data["clusters"]], [{"qqqq-a", "qqqq-b", "qqqq-c"}])
+        self.assertTrue(all(len(c["members"]) <= 20 for c in data["clusters"]))
+        self.assertEqual(data["oversized"], [])
+        self.assertTrue(any(w.startswith("skipped") for w in data["warnings"]))
 
 
 if __name__ == "__main__":

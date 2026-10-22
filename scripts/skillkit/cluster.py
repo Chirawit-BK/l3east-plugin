@@ -99,18 +99,19 @@ def main() -> int:
         for t in toks:
             df[t] = df.get(t, 0) + 1
 
+    # same name and explicit mentions are strong; description overlap and rare name tokens are weak and size-capped
     strong: list[tuple[str, str, str]] = []
-    weak: list[tuple[str, str, str]] = []
+    weak: list[tuple[float, str, str, str]] = []
     for x, y in combinations(sorted(keyed), 2):
         j = jaccard(dtok[x], dtok[y])
         pair_scores[(x, y)] = round(j, 3)
         if j >= a.threshold:
-            strong.append((x, y, f"jaccard {j:.2f}: {x} ~ {y}"))
+            weak.append((j, x, y, f"jaccard {j:.2f}: {x} ~ {y}"))
         if keyed[x]["name"] == keyed[y]["name"]:
             strong.append((x, y, f"same name across scopes: {x} ~ {y}"))
         shared = sorted(t for t in ntok[x] & ntok[y] if df.get(t, 0) <= WEAK_TOKEN_MAX_DF)
         if shared:
-            weak.append((x, y, f"name token '{shared[0]}': {x} ~ {y}"))
+            weak.append((0.0, x, y, f"name token '{shared[0]}': {x} ~ {y}"))
     for k, e in keyed.items():
         for m in e.get("mentions_skills", []):
             for other in by_name.get(m, []):
@@ -121,7 +122,7 @@ def main() -> int:
         link(x, y, why)
     size = lambda r: sum(1 for k in keyed if uf.find(k) == r)  # noqa: E731
     skipped = 0
-    for x, y, why in sorted(weak):
+    for _, x, y, why in sorted(weak, key=lambda w: (-w[0], w[1], w[2])):
         rx, ry = uf.find(x), uf.find(y)
         if rx == ry:
             reasons.setdefault(x, []).append(why)

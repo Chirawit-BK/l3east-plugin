@@ -15,9 +15,14 @@ FIRST_ACTION_RE = re.compile(
     r"(?i)(before any (?:response|action|other)|before (?:you |starting |doing )?anything|mandatory prerequisite"
     r"|must (?:be )?(?:invoked?|loaded?|called?|read)\b.{0,60}\bbefore\b|read (?:this )?(?:first|before)|call .{0,40}\bfirst\b)"
 )
-SLASH_RE = re.compile(r"(?<![\w/])/([a-z0-9][\w:-]{2,})")
+SLASH_RE = re.compile(r"(?<![\w/])/([a-z0-9][\w:-]{2,})(?![\w/-])")  # not a path segment like /docs/figma/
 BACKTICK_RE = re.compile(r"`([a-z0-9][\w:-]{2,})`")
 SYNCED_NAMESPACE = "anthropic-skills"  # the desktop app lists ~/.claude/skills/synced/* under this namespace
+
+
+def _backtick_mention(tok: str) -> bool:
+    """A backticked word counts as a mention only if it looks like a skill name, not `dev` or `main`."""
+    return len(tok) >= 5 or "-" in tok or ":" in tok
 
 
 def _entry(md: Path, source: str, slash: str, kind: str) -> dict:
@@ -48,7 +53,7 @@ def _entry(md: Path, source: str, slash: str, kind: str) -> dict:
         "has_scripts": (md.parent / "scripts").is_dir() if kind == "skill" else False,
         "has_references": (md.parent / "references").is_dir() if kind == "skill" else False,
         "enabled": True,
-        "_raw_mentions": sorted(set(SLASH_RE.findall(body) + BACKTICK_RE.findall(body))),
+        "_raw_mentions": sorted(set(SLASH_RE.findall(body) + [t for t in BACKTICK_RE.findall(body) if _backtick_mention(t)])),
     }
 
 

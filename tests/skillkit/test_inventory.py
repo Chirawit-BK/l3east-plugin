@@ -75,6 +75,27 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(docs["source"], "plugin:anthropic-skills@synced")
         self.assertEqual(docs["slash_names"], ["/anthropic-skills:docs"])
 
+    def test_mentions_ignore_paths_and_short_backtick_words(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            home, project = tmp / "home", tmp / "project"
+            for name in ("dev", "docs", "commit-helper"):
+                (home / "skills" / name).mkdir(parents=True)
+                (home / "skills" / name / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: Use when testing {name}. Not for anything else.\n---\n\nBody.\n", encoding="utf-8")
+            (home / "commands").mkdir()
+            (home / "commands" / "branchy.md").write_text(
+                "checkout `dev` branch, see /docs/figma/ and `commit-helper` then /dev \n", encoding="utf-8")
+            project.mkdir()
+            pl = tmp / "pl.json"
+            pl.write_text("[]", encoding="utf-8")
+            out = tmp / "inventory.json"
+            res = run_script("inventory.py", "--project", str(project), "--claude-home", str(home), "--plugin-list", str(pl), "--out", str(out))
+            self.assertEqual(res.returncode, 0, res.stderr)
+            inv = load(out)
+        cmd = next(e for e in inv["entries"] if e["name"] == "branchy")
+        self.assertEqual(cmd["mentions_skills"], ["commit-helper", "dev"])
+
 
 if __name__ == "__main__":
     unittest.main()
