@@ -1,6 +1,6 @@
 # Per-cluster judge prompt
 
-Dispatch one general-purpose subagent per cluster with two or more members. Fill every `{{...}}`. Send clusters in parallel.
+Dispatch one judge per cluster with two or more members: the plugin agent `skillkit-judge` (it may be listed as `l3east:skillkit-judge`; it has no shell and no file writes). If that agent type is unavailable, dispatch `general-purpose` with `model: sonnet`; the DATA rule below still applies. Fill every `{{...}}`. Send clusters in parallel.
 
 - `{{for each member}}` and `{{end}}` are loop markers: repeat the block between them once per member, then delete both marker lines.
 - `{{name}}` is the member's cluster key exactly as `clusters.json` `members` writes it (`verify@personal`, `commit-helper`).

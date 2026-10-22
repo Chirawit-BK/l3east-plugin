@@ -9,7 +9,7 @@ Personal Claude Code plugin. Install from the local marketplace `l3east-local`.
 | `/l3east:skill-health` | audit every loaded skill, command, hook and MCP server; report + draft routing block |
 | `/l3east:skill-compat <candidate>` | check one new skill or plugin against the installed set before installing |
 
-`skill-health` and `skill-compat` share `scripts/skillkit/` (Python 3 stdlib, run with `python3 -I`) and `references/skillkit/`.
+`skill-health` and `skill-compat` share `scripts/skillkit/` (Python 3 stdlib, run with `python3 -I`), `references/skillkit/` and the `skillkit-judge` agent (`agents/skillkit-judge.md`: Read only, no shell, no file writes).
 
 Tests:
 
