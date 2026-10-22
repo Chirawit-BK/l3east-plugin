@@ -103,7 +103,7 @@ def main() -> int:
         groups.setdefault(uf.find(k), []).append(k)
 
     clusters, singletons, oversized = [], [], []
-    for i, members in enumerate(sorted((sorted(m) for m in groups.values()), key=lambda m: m[0]), start=1):
+    for members in sorted((sorted(m) for m in groups.values()), key=lambda m: m[0]):
         if len(members) == 1:
             singletons.append(members[0])
             continue
@@ -112,7 +112,7 @@ def main() -> int:
             ({"a": x, "b": y, "jaccard": pair_scores[(x, y)]} for x, y in combinations(members, 2)),
             key=lambda p: -p["jaccard"],
         )[:10]
-        cid = f"c{i:02d}"
+        cid = f"c{len(clusters) + 1:02d}"
         clusters.append({
             "id": cid,
             "members": members,

@@ -22,6 +22,7 @@ class ClusterTests(unittest.TestCase):
         self.assertIn({"verify@personal", "verify@project"}, members)
         self.assertIn("bigdesc", data["singletons"])
         self.assertIn("deploy", data["singletons"])
+        self.assertEqual(sorted(c["id"] for c in data["clusters"]), ["c01", "c02"])
         commit_cluster = next(c for c in data["clusters"] if "commit-helper" in c["members"])
         self.assertTrue(any("mentions" in r for r in commit_cluster["reasons"]))
         self.assertTrue(all("jaccard" in p for p in commit_cluster["pairs"]))
