@@ -47,7 +47,11 @@ def scan_file(path: Path, slug: str, acc: dict, stats: dict) -> None:
                 stats["tool_uses"] += 1
                 name = str(block.get("name", ""))
                 if name == "Skill":
-                    skill = (block.get("input") or {}).get("skill")
+                    inp = block.get("input")
+                    if not isinstance(inp, dict):
+                        stats["bad_lines"] += 1
+                        continue
+                    skill = inp.get("skill")
                     if skill:
                         bump(acc["skills"], str(skill), slug)
                 elif name.startswith("mcp__"):

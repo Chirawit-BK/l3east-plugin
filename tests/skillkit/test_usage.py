@@ -34,6 +34,20 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(u["status"], "unavailable")
         self.assertTrue(any("skill-doctor" in w for w in u["warnings"]))
 
+    def test_non_dict_skill_input_counts_as_bad_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d) / "projects" / "-x"
+            proj.mkdir(parents=True)
+            (proj / "s.jsonl").write_text(
+                '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"good"}}]}}\n'
+                '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill","input":"oops"}]}}\n',
+                encoding="utf-8",
+            )
+            u = self.run_usage(Path(d), Path(d) / "projects")
+        self.assertEqual(u["status"], "ok")
+        self.assertEqual(u["skills"], {"good": {"total": 1, "by_project": {"-x": 1}}})
+        self.assertEqual(u["bad_lines"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
