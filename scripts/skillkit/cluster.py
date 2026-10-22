@@ -67,7 +67,17 @@ def main() -> int:
     for e in entries:
         counts[e["name"]] = counts.get(e["name"], 0) + 1
     dup_names = {n for n, c in counts.items() if c > 1}
-    keyed = {key_of(e, dup_names): e for e in entries}
+    keyed: dict[str, dict] = {}
+    warnings: list[str] = []
+    for e in entries:
+        base = key_of(e, dup_names)
+        k, n = base, 1
+        while k in keyed:
+            n += 1
+            k = f"{base}#{n}"
+        if k != base:
+            warnings.append(f"duplicate key {base}: kept as {k}")
+        keyed[k] = e
     uf = UnionFind(keyed.keys())
     reasons: dict[str, list[str]] = {}
     pair_scores: dict[tuple[str, str], float] = {}
@@ -123,7 +133,8 @@ def main() -> int:
         if len(members) > OVERSIZE:
             oversized.append(cid)
 
-    write_json(a.out, {"threshold": a.threshold, "clusters": clusters, "singletons": sorted(singletons), "oversized": oversized})
+    write_json(a.out, {"threshold": a.threshold, "clusters": clusters, "singletons": sorted(singletons),
+                       "oversized": oversized, "warnings": warnings})
     return 0
 
 
