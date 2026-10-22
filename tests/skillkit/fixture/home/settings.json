@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "pnpm lint"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "echo user-hook"}]}
+    ]
+  },
+  "enabledPlugins": {"alpha@mkt": true}
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "uvx",
+      "args": ["mcp-jira"],
+      "env": {"JIRA_URL": "https://x.atlassian.net", "JIRA_API_TOKEN": "FIXTURE-SECRET-TOKEN-VALUE-1234567890abcdef"}
+    }
+  }
+}
