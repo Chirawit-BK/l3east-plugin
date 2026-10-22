@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import DESC_LIMIT, read_json, write_json  # noqa: E402
 
-TRIGGER_RE = re.compile(r"(?i)\b(use (?:this )?(?:skill )?(?:when|for|whenever)|trigger|when the user|whenever|invoke when|use when|run when)\b")
+TRIGGER_RE = re.compile(r"(?i)\b(use (?:this )?(?:skill )?(?:when|for|whenever|after)|triggers?|triggered|when the user|whenever|invoke when|run when)\b")
 NOT_FOR_RE = re.compile(r"(?i)\b(not for|do not use|don't use|never (?:use|for)|not when|skip when|instead of|except)\b")
 BROAD_RE = re.compile(r"(?i)\b(any|anything|everything|all|every)\b")
 NEAR_LIMIT = 1200

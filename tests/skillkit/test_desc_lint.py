@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,30 @@ class DescLintTests(unittest.TestCase):
         self.assertIn("no_not_for", issues[("smart-commit", "plugin:alpha@mkt")])
         self.assertNotIn(("commit-helper", "personal"), issues)  # used twice, has trigger + not-for
         self.assertEqual(data["summary"]["truncated_over_1536"], 1)
+
+
+    def test_trigger_phrase_variants(self):
+        descs = {
+            "triggers": "Triggers on: chart, graph, plot requests from the user in any medium.",
+            "use-after": "Use after Phase 1 crawl completes to dedupe the module documents.",
+            "plain": "Summarize a video into takeaways.",
+        }
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            inv, usage, out = tmp / "inventory.json", tmp / "usage.json", tmp / "desc_lint.json"
+            inv.write_text(json.dumps({"entries": [
+                {"name": n, "source": "personal", "description": t, "desc_chars": len(t), "slash_names": ["/" + n]}
+                for n, t in descs.items()
+            ]}), encoding="utf-8")
+            usage.write_text(json.dumps({"status": "unavailable"}), encoding="utf-8")
+            r = run_script("desc_lint.py", "--inventory", str(inv), "--usage", str(usage), "--out", str(out))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            data = load(out)
+        issues = {e["name"]: set(e["issues"]) for e in data["entries"]}
+        self.assertNotIn("no_trigger_phrase", issues.get("triggers", set()))
+        self.assertNotIn("no_trigger_phrase", issues.get("use-after", set()))
+        self.assertIn("no_trigger_phrase", issues["plain"])
+        self.assertNotIn("never_used_in_window", set().union(*issues.values()))
 
 
 if __name__ == "__main__":
