@@ -17,6 +17,7 @@ FIRST_ACTION_RE = re.compile(
 )
 SLASH_RE = re.compile(r"(?<![\w/])/([a-z0-9][\w:-]{2,})")
 BACKTICK_RE = re.compile(r"`([a-z0-9][\w:-]{2,})`")
+SYNCED_NAMESPACE = "anthropic-skills"  # the desktop app lists ~/.claude/skills/synced/* under this namespace
 
 
 def _entry(md: Path, source: str, slash: str, kind: str) -> dict:
@@ -92,6 +93,9 @@ class Scanner:
                 self.add(_entry(d / "SKILL.md", "personal", f"/{d.name}", "skill"))
             elif (d / "skills").is_dir():
                 self.plugin_root(d, f"plugin:{d.name}@skills-dir", d.name)
+            elif d.name == "synced":
+                for sess in sorted(p for p in d.iterdir() if p.is_dir()):
+                    self.skills_dir(sess, f"plugin:{SYNCED_NAMESPACE}@synced", f"{SYNCED_NAMESPACE}:")
 
 
 def main() -> int:
@@ -118,7 +122,11 @@ def main() -> int:
         if p.get("enabled") is False:
             continue
         pid = str(p.get("id", "?"))
-        root = Path(str(p.get("installPath", "")))
+        raw_path = str(p.get("installPath") or "").strip()
+        if not raw_path:
+            sc.warnings.append(f"plugin {pid}: installPath unknown (synced plugin); its skills are covered by the in-session listing step")
+            continue
+        root = Path(raw_path)
         if not root.is_dir():
             sc.warnings.append(f"installPath missing for {pid}: {root}")
             continue

@@ -20,6 +20,7 @@ Every finding gets exactly one class. Classes R, C and X need a subagent verdict
 - X requires a quotable sentence from each side. A difference in tone is not X.
 - Usage counts are evidence, never the verdict. A zero-use member is a drop candidate only when another member covers its job.
 - "none" is allowed: coincidental word overlap with different jobs.
+- Clusters link on description overlap, shared rare name tokens (a token used by at most five skills), same name, or explicit mentions; common tokens such as `figma` do not link, so a family of 20 same-prefix skills is judged through its description overlap only.
 
 ## Severity for the report order
 

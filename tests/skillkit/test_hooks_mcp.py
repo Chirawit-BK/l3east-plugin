@@ -97,5 +97,19 @@ class HooksMcpTests(unittest.TestCase):
         dup = [x for x in data["mcp_duplicates"] if x["key"] == "url:https://h/mcp?token=***"]
         self.assertEqual(sorted(e["name"] for e in dup[0]["entries"]), ["tok_a", "tok_b"])
 
+    def test_empty_install_path_is_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            pl = tmp / "pl.json"
+            pl.write_text(json.dumps([{"id": "ghost@synced", "version": "x", "scope": "synced", "enabled": True, "installPath": ""}]), encoding="utf-8")
+            out = tmp / "hooks_mcp.json"
+            res = run_script("hooks_mcp.py", "--project", str(FIX_PROJECT), "--claude-home", str(FIX_HOME), "--plugin-list", str(pl), "--out", str(out))
+            self.assertEqual(res.returncode, 0, res.stderr)
+            data = load(out)
+        self.assertFalse(any(r["source"] == "plugin:ghost@synced" for rows in data["hooks"].values() for r in rows))
+        self.assertFalse(any(m["source"] == "plugin:ghost@synced" for m in data["mcp"]))
+        self.assertTrue(any("ghost@synced" in w for w in data["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

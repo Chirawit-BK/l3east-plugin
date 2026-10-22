@@ -126,10 +126,15 @@ def main() -> int:
     for p in plugins:
         if p.get("enabled") is False:
             continue
-        root = Path(str(p.get("installPath", "")))
+        pid = str(p.get("id", "?"))
+        raw_path = str(p.get("installPath") or "").strip()
+        if not raw_path:
+            warnings.append(f"plugin {pid}: installPath unknown (synced plugin); its skills are covered by the in-session listing step")
+            continue
+        root = Path(raw_path)
         if not root.is_dir():
             continue
-        src = f"plugin:{p.get('id', '?')}"
+        src = f"plugin:{pid}"
         plugin_hooks(root, src, hooks, warnings)
         cfg = read_json(root / ".mcp.json")
         if cfg is not None:

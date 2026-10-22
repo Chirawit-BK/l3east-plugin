@@ -18,6 +18,7 @@ STOP = set(
     "what which who how where why their they them these those".split()
 )
 OVERSIZE = 20
+WEAK_TOKEN_MAX_DF = 5
 
 
 def key_of(e: dict, dup_names: set) -> str:
@@ -88,25 +89,49 @@ def main() -> int:
 
     dtok = {k: desc_tokens(e) for k, e in keyed.items()}
     ntok = {k: name_tokens(e) for k, e in keyed.items()}
+    by_name: dict[str, list[str]] = {}
+    for k, e in keyed.items():
+        by_name.setdefault(e["name"], []).append(k)
+
+    # document frequency of name tokens across all entries
+    df: dict[str, int] = {}
+    for toks in ntok.values():
+        for t in toks:
+            df[t] = df.get(t, 0) + 1
+
+    strong: list[tuple[str, str, str]] = []
+    weak: list[tuple[str, str, str]] = []
     for x, y in combinations(sorted(keyed), 2):
         j = jaccard(dtok[x], dtok[y])
         pair_scores[(x, y)] = round(j, 3)
         if j >= a.threshold:
-            link(x, y, f"jaccard {j:.2f}: {x} ~ {y}")
-        shared = ntok[x] & ntok[y]
-        if shared:
-            link(x, y, f"name token '{sorted(shared)[0]}': {x} ~ {y}")
+            strong.append((x, y, f"jaccard {j:.2f}: {x} ~ {y}"))
         if keyed[x]["name"] == keyed[y]["name"]:
-            link(x, y, f"same name across scopes: {x} ~ {y}")
-
-    by_name = {}
-    for k, e in keyed.items():
-        by_name.setdefault(e["name"], []).append(k)
+            strong.append((x, y, f"same name across scopes: {x} ~ {y}"))
+        shared = sorted(t for t in ntok[x] & ntok[y] if df.get(t, 0) <= WEAK_TOKEN_MAX_DF)
+        if shared:
+            weak.append((x, y, f"name token '{shared[0]}': {x} ~ {y}"))
     for k, e in keyed.items():
         for m in e.get("mentions_skills", []):
             for other in by_name.get(m, []):
                 if other != k:
-                    link(k, other, f"mentions: {k} -> {other}")
+                    strong.append((k, other, f"mentions: {k} -> {other}"))
+
+    for x, y, why in strong:
+        link(x, y, why)
+    size = lambda r: sum(1 for k in keyed if uf.find(k) == r)  # noqa: E731
+    skipped = 0
+    for x, y, why in sorted(weak):
+        rx, ry = uf.find(x), uf.find(y)
+        if rx == ry:
+            reasons.setdefault(x, []).append(why)
+            continue
+        if size(rx) + size(ry) > OVERSIZE:
+            skipped += 1
+            continue
+        link(x, y, why)
+    if skipped:
+        warnings.append(f"skipped {skipped} weak merges that would exceed {OVERSIZE} members")
 
     groups: dict[str, list[str]] = {}
     for k in keyed:
