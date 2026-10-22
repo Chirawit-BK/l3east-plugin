@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import DESC_LIMIT, claude_home, est_tokens, load_plugin_list, parse_frontmatter, write_json  # noqa: E402
+from common import DESC_LIMIT, claude_home, est_tokens, load_plugin_list, parse_frontmatter, read_json, write_json  # noqa: E402
 
 FIRST_ACTION_RE = re.compile(
     r"(?i)(before any (?:response|action|other)|before (?:you |starting |doing )?anything|mandatory prerequisite"
@@ -18,6 +18,13 @@ FIRST_ACTION_RE = re.compile(
 SLASH_RE = re.compile(r"(?<![\w/])/([a-z0-9][\w:-]{2,})(?![\w/-])")  # not a path segment like /docs/figma/
 BACKTICK_RE = re.compile(r"`([a-z0-9][\w:-]{2,})`")
 SYNCED_NAMESPACE = "anthropic-skills"  # the desktop app lists ~/.claude/skills/synced/* under this namespace
+PLUGIN_NAME_RE = re.compile(r"^[A-Za-z0-9][\w.-]*$")
+
+
+def plugin_namespace(root: Path, fallback: str) -> str:
+    """Slash prefix of a plugin root: plugin.json `name` when present and sane, else the fallback."""
+    name = (read_json(root / ".claude-plugin" / "plugin.json") or {}).get("name")
+    return name.strip() if isinstance(name, str) and PLUGIN_NAME_RE.match(name.strip()) else fallback
 
 
 def _backtick_mention(tok: str) -> bool:
@@ -85,6 +92,7 @@ class Scanner:
             self.add(_entry(md, source, f"/{prefix}{md.stem}", "command"))
 
     def plugin_root(self, root: Path, source: str, short: str) -> None:
+        short = plugin_namespace(root, short)
         self.skills_dir(root / "skills", source, f"{short}:")
         self.commands_dir(root / "commands", source, f"{short}:")
 

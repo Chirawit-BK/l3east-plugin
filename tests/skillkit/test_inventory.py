@@ -53,6 +53,7 @@ class InventoryTests(unittest.TestCase):
         cand = [e for e in inv["entries"] if e["source"].startswith("candidate")]
         self.assertEqual([c["name"] for c in cand], ["quick-commit"])
         self.assertEqual(cand[0]["source"], "candidate:candidate")
+        self.assertEqual(cand[0]["slash_names"], ["/cand:quick-commit"])  # prefix from plugin.json name
 
     def test_empty_install_path_is_skipped_with_warning(self):
         with tempfile.TemporaryDirectory() as d:

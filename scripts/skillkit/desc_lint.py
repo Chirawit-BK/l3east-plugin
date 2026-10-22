@@ -64,8 +64,9 @@ def main() -> int:
     inv = read_json(a.inventory) or {}
     usage = read_json(a.usage) or {}
     usage_ok = usage.get("status") == "ok"
-    rows, summary = [], {}
+    rows, summary, uses_all = [], {}, []
     for e in inv.get("entries", []):
+        uses_all.append({"name": e["name"], "source": e["source"], "uses": uses_for(e, usage) if usage_ok else None})
         issues = lint(e, usage, usage_ok)
         if not issues:
             continue
@@ -74,7 +75,8 @@ def main() -> int:
         rows.append({"name": e["name"], "source": e["source"], "desc_chars": e.get("desc_chars", 0),
                      "uses": uses_for(e, usage) if usage_ok else None, "issues": issues})
     rows.sort(key=lambda r: (-len(r["issues"]), r["name"]))
-    write_json(a.out, {"usage_status": usage.get("status", "unknown"), "summary": summary, "entries": rows})
+    write_json(a.out, {"usage_status": usage.get("status", "unknown"), "summary": summary, "entries": rows,
+                       "uses_all": uses_all})
     return 0
 
 

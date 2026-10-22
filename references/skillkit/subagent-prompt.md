@@ -3,6 +3,9 @@
 Dispatch one general-purpose subagent per cluster with two or more members. Fill every `{{...}}`. Send clusters in parallel.
 
 - `{{for each member}}` and `{{end}}` are loop markers: repeat the block between them once per member, then delete both marker lines.
+- `{{name}}` is the member's cluster key exactly as `clusters.json` `members` writes it (`verify@personal`, `commit-helper`).
+- `{{since}}` is the usage window in days: `usage.json` `since_days`.
+- `{{uses}}` is the member's count from `desc_lint.json` `uses_all`; write `unknown` when it is `null`, and `n/a` for a candidate member (skill-compat), which has never been installed.
 - The body and CLAUDE.md blocks are fenced with four backticks because skill bodies contain triple-backtick blocks. Keep the four.
 
 ---
@@ -14,6 +17,8 @@ Rules:
 - do NOT git checkout/switch; use git diff A..B if you ever need history.
 - Do not edit, create or delete any file.
 - Reply with the JSON object only. No prose before or after it.
+- Each member's heading below is its key. Use these keys exactly, character for character, in `keep`, `drop_or_disable` and `contradictions`. Do not shorten them or add a slash.
+- A uses value of `n/a` means the member is a candidate that has never been installed; `unknown` means no usage data.
 
 ## Cluster {{id}}
 
@@ -62,9 +67,9 @@ Usage counts are evidence, not the verdict. A zero-use member is a drop candidat
   "cluster": "{{id}}",
   "verdict": "R | C | X | none",
   "reason": "at most two sentences",
-  "keep": ["name"],
-  "drop_or_disable": ["name"],
-  "contradictions": [{"a": "name", "b": "name | CLAUDE.md | output-style", "a_says": "quote", "b_says": "quote"}],
+  "keep": ["member key"],
+  "drop_or_disable": ["member key"],
+  "contradictions": [{"a": "member key", "b": "member key | CLAUDE.md | output-style", "a_says": "quote", "b_says": "quote"}],
   "sample_prompts": ["three realistic user prompts that could trigger more than one member"],
   "proposed_rules": ["one CLAUDE.md line per decision, format: <situation> → /<skill>. Never <other>."]
 }
