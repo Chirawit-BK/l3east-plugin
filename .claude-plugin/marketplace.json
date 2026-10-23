@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "l3east",
-      "description": "Personal commands and skills",
-      "version": "1.0.0",
+      "description": "Personal commands and skills: ship, audit, skill-health, skill-compat",
+      "version": "1.1.0",
       "source": "./",
       "author": {
         "name": "l3east",
