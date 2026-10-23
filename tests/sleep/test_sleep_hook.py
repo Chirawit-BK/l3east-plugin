@@ -122,9 +122,9 @@ class SleepHookTests(unittest.TestCase):
 
     def test_prompt_that_looks_human_gets_wake_hint(self):
         self.prompt("/l3east:sleep")
-        for extra in ({}, {"source": "user"}):
-            out = self.prompt("how did it go?", **extra)
-            self.assertIn("/l3east:wake", out["systemMessage"])
+        for text, extra in (("how did it go?", {}), ("how did it go?", {"source": "user"})):
+            out = self.prompt(text, **extra)
+            self.assertIn("/l3east:wake", out["systemMessage"], text)
         self.assertEqual(self.state()["status"], "active")
 
     def test_prompts_outside_a_run_are_silent(self):
@@ -144,13 +144,47 @@ class SleepHookTests(unittest.TestCase):
         self.assertIn("revoked", out["hookSpecificOutput"]["additionalContext"])
         self.assertIsNone(self.prompt("again"))
 
-    def test_stale_run_expires_and_first_merge_after_is_denied_with_notice(self):
+    def test_machine_prompt_after_unattended_close_keeps_merges_blocked(self):
+        os.environ["L3EAST_SLEEP_BUDGET"] = "1"
+        self.prompt("/l3east:sleep merge")
+        self.stop("a")
+        self.stop("b", background_tasks=[SUBAGENT])
+        self.assertEqual(self.state()["status"], "budget")
+        out = self.prompt(TASK_NOTIFICATION)
+        self.assertIn("run is closed (budget)", out["hookSpecificOutput"]["additionalContext"])
+        for _ in range(2):
+            self.assertIn("run is closed", self.reason(self.shell(GOOD_MERGE)))
+            self.assertIn("run is closed", self.reason(self.shell("git push origin main")))
+        self.assertIsNone(self.shell("git push origin feat/x"))
+        self.prompt("ok, I'm here")
+        self.assertIsNone(self.shell(GOOD_MERGE))
+
+    def test_wake_on_a_closed_run_skips_the_notice(self):
+        self.prompt("/l3east:sleep")
+        self.stop("SLEEP-DONE")
+        self.prompt("/l3east:wake")
+        self.assertIsNone(self.prompt("hello"))
+
+    def test_stale_run_expires_says_so_and_keeps_merges_blocked(self):
         old = (datetime.now(timezone.utc) - timedelta(hours=19)).isoformat()
         self.write_state(status="active", merge=True, continuations=3, budget=40, started_at=old)
-        self.assertIsNone(self.stop("step"))
+        self.assertIn("expired", self.stop("step")["systemMessage"])
         self.assertEqual(self.state()["status"], "expired")
-        self.assertIn("run is closed (expired)", self.reason(self.shell(GOOD_MERGE)))
-        self.assertIsNone(self.shell(GOOD_MERGE))
+        self.assertIsNone(self.stop("again"))
+        for _ in range(2):
+            self.assertIn("run is closed (expired)", self.reason(self.shell(GOOD_MERGE)))
+
+    def test_expiry_first_seen_by_a_tool_call_is_still_announced_at_stop(self):
+        old = (datetime.now(timezone.utc) - timedelta(hours=19)).isoformat()
+        self.write_state(status="active", merge=False, continuations=3, budget=40, started_at=old)
+        self.assertIsNone(self.shell("ls"))
+        self.assertEqual(self.state()["status"], "expired")
+        self.assertIn("expired", self.stop("step")["systemMessage"])
+
+    def test_task_without_a_type_counts_as_idle(self):
+        self.prompt("/l3east:sleep")
+        self.assertEqual(self.stop("waiting", background_tasks=[{"id": "x", "status": "running"}])["decision"],
+                         "block")
 
     # stop
 
@@ -200,6 +234,14 @@ class SleepHookTests(unittest.TestCase):
         self.prompt("/l3east:sleep")
         self.assertEqual(self.stop("waiting", background_tasks=[DONE_SUBAGENT])["decision"], "block")
 
+    def test_any_live_non_shell_task_wakes_and_paused_shell_does_not(self):
+        self.prompt("/l3east:sleep")
+        for kind in ("teammate", "cloud session", "MCP task", "monitor", "workflow"):
+            task = {"id": "t", "type": kind, "status": "pending", "description": ""}
+            self.assertIsNone(self.stop("waiting", background_tasks=[task]), kind)
+        paused = {**SHELL, "status": "paused"}
+        self.assertEqual(self.stop("waiting", background_tasks=[paused])["decision"], "block")
+
     def test_only_shells_or_crons_pending_blocks_and_names_them(self):
         self.prompt("/l3east:sleep")
         out = self.stop("waiting", background_tasks=[SHELL], session_crons=[CRON])
@@ -235,6 +277,7 @@ class SleepHookTests(unittest.TestCase):
         self.assertIn("/l3east:wake", self.reason(self.run_event("pretool", {"tool_name": "AskUserQuestion"})))
         self.reason(self.shell(GOOD_MERGE))
         self.assertIsNone(self.shell("ls"))
+        self.assertIn("/l3east:wake", self.prompt("what's going on?")["systemMessage"])
 
     def test_sleep_or_wake_replaces_a_corrupt_state(self):
         self.write_state(status="active")
@@ -275,13 +318,31 @@ class SleepHookTests(unittest.TestCase):
             "gh pr merge 5 --repo o/r --squash --merge --match-head-commit abc1234",
             "gh api -X PUT repos/o/r/pulls/5/merge",
             "gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'",
+            "gh api -X POST repos/o/r/merges -f base=feat -f head=x",
+            "gh api graphql -f query='mutation { mergeBranch(input: {}) { clientMutationId } }'",
+            "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }'",
+            "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge",
+            'g""h pr mer\\ge 5 --repo o/r --squash --match-head-commit abc1234',
+            "gh pr merge 5 --repo o/r --squash --match-head-commit abc1234 > out.txt",
         ]
         with mock.patch.object(sleep_hook, "pr_base", return_value="dev") as base:
             for cmd in bad:
-                self.assertIn(sleep_hook.MERGE_FORM, self.reason(self.shell(cmd)), cmd)
+                self.assertIn("gh pr merge", self.reason(self.shell(cmd)), cmd)
+            self.assertIn("$( )", self.reason(self.shell("echo $(" + GOOD_MERGE + ")")))
+            base.assert_not_called()
+            self.assertIn("one plain command", self.reason(self.shell(f'bash -c "{GOOD_MERGE}"')))
             base.assert_not_called()
             self.assertIsNone(self.shell(GOOD_MERGE))
             base.assert_called_once_with("5", "o/r")
+
+    def test_ordinary_commands_that_mention_merge_pass_without_a_grant(self):
+        self.prompt("/l3east:sleep")
+        for cmd in ('gh pr create --title "Fix merge conflict in auth" --body "ready to merge"',
+                    'gh pr comment 5 --body "merge-ready"', "gh pr checkout feat/merge-fix",
+                    "gh run list --workflow merge.yml", "gh pr view 5 --json mergeable,mergeStateStatus",
+                    "gh api repos/o/r --jq '[.allow_merge_commit,.allow_squash_merge]'",
+                    "gh pr checks 5 --watch && git merge origin/dev", 'git commit -m "fix gh merge conflict"'):
+            self.assertIsNone(self.shell(cmd), cmd)
 
     def test_merge_into_main_or_unknown_base_denied(self):
         self.prompt("/l3east:sleep merge")
@@ -297,17 +358,36 @@ class SleepHookTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0],
                          ["gh", "pr", "view", "12", "--repo", "o/r", "--json", "baseRefName", "-q", ".baseRefName"])
 
-    def test_push_to_main_denied_other_pushes_and_commands_pass(self):
+    def test_push_to_protected_or_unnamed_branches_denied(self):
         self.prompt("/l3east:sleep merge")
-        for cmd in ("git push origin main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/master"):
-            self.assertIn("never push", self.reason(self.shell(cmd)), cmd)
-        for cmd in ("git push -u origin feat/main-menu", "git push origin main-fix", "gh pr view 5 --json mergeable",
+        denied = {
+            "git push origin main": "never push to main",
+            "git push origin HEAD:refs/heads/master": "never push to master",
+            "git -C ../wt push origin dev": "never push to dev",
+            "git checkout develop && git merge feat/x && git push origin develop": "never push to develop",
+            "git push": "name the remote and the branch",
+            "git push origin HEAD": "instead of HEAD",
+            "git push --all origin": "--all",
+            "git push --mirror origin": "--mirror",
+            "git push origin :feat/x": "deleting",
+            "git push -f origin feat/x": "-f are not allowed",
+            "git push origin +feat/x": "force-push",
+            "env GIT_TRACE=1 git push origin main": "never push to main",
+        }
+        for cmd, why in denied.items():
+            self.assertIn(why, self.reason(self.shell(cmd)), cmd)
+
+    def test_ordinary_pushes_and_commands_pass(self):
+        self.prompt("/l3east:sleep merge")
+        for cmd in ("git push -u origin feat/main-menu", "git push origin main-fix",
+                    "git push --force-with-lease origin feat/x", "git push origin HEAD:feat/x",
+                    "git push -u origin feat/x && gh pr create --base main --fill", "git checkout main",
                     "git merge origin/dev", "ls"):
             self.assertIsNone(self.shell(cmd), cmd)
 
     def test_other_shell_tools_are_checked_too(self):
         self.prompt("/l3east:sleep")
-        for tool in ("mcp__terminal__run_in_terminal", "mcp__plugin_serena_serena__execute_shell_command"):
+        for tool in ("Monitor", "mcp__terminal__run_in_terminal", "mcp__plugin_serena_serena__execute_shell_command"):
             self.assertIn("not granted", self.reason(self.shell(GOOD_MERGE, tool=tool)), tool)
         self.assertIsNone(self.shell(GOOD_MERGE, tool="Read"))
 
@@ -362,7 +442,7 @@ class SleepHookTests(unittest.TestCase):
         for ev, arg in (("UserPromptSubmit", "prompt"), ("Stop", "stop"), ("PreToolUse", "pretool")):
             self.assertTrue(wired[ev].endswith(f'scripts/sleep/sleep_hook.py" {arg}'), wired[ev])
         self.assertEqual(hooks["PreToolUse"][0]["matcher"],
-                         "AskUserQuestion|Bash|.*run_in_terminal|.*execute_shell_command")
+                         "AskUserQuestion|Bash|Monitor|.*run_in_terminal|.*execute_shell_command")
 
 
 if __name__ == "__main__":

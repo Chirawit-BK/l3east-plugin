@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import shell_gate  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL_PATH = PLUGIN_ROOT / "skills" / "sleep" / "SKILL.md"
@@ -23,15 +25,14 @@ STATUSES = ("active", "done", "blocked", "budget", "ended", "expired")
 DONE_RE = re.compile(r"^[`*_\s]*SLEEP-DONE[`*_\s.]*$")
 BLOCKED_RE = re.compile(r"^[`*_\s]*SLEEP-BLOCKED[`*_]*:[`*_\s]*[^`*_\s]")
 SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
-SHELL_TOOL_RE = re.compile(r"^(Bash|.*run_in_terminal|.*execute_shell_command)$")
-MERGEISH_RE = re.compile(r"\bgh\b.*\bmerge\b|/pulls/\d+/merge|mergePullRequest", re.S)
-PROTECTED_PUSH_RE = re.compile(r"\bgit\s+push\b.*(?<![\w/.-])(?:refs/heads/)?(main|master)(?![\w/.-])", re.S)
+SHELL_TOOL_RE = re.compile(r"^(Bash|Monitor|.*run_in_terminal|.*execute_shell_command)$")
 REPO_RE = re.compile(r"[\w.-]+/[\w.-]+")
 SHA_RE = re.compile(r"[0-9a-fA-F]{7,40}")
+PLAIN_COMMAND_RE = re.compile(r"[`$<>\\]")
 MERGE_METHODS = {"--merge", "--squash", "--rebase"}
 MACHINE_SOURCES = {"system", "loop_wakeup", "schedule_wakeup", "poll_event", "sdk"}
-MACHINE_PROMPT_RE = re.compile(r"^\s*<task-notification>|usage limit has reset")
-WAKING_TASK_TYPES = {"subagent", "monitor", "workflow"}
+MACHINE_PROMPT_RE = re.compile(r"<task-notification>|usage limit has reset")
+IDLE_TASK_TYPES = {"shell"}
 LIVE_TASK_STATUSES = {"running", "pending"}
 PROTECTED_BASES = {"main", "master"}
 DEFAULT_BUDGET = 40
@@ -52,8 +53,9 @@ LAST_REASON = (
     "exactly SLEEP-BLOCKED: continuation budget spent"
 )
 IDLE_REASON = (
-    "Sleep mode: the turn is ending while only {what} is pending, and that will not wake this session. "
-    "Wait on it with a tool, or stop shells and delete crons you started, then do the next step. {rest}"
+    "Sleep mode: the turn is ending while only {what} is pending. The hook cannot tell a shell that will exit "
+    "from one that never will (a dev server), or when a cron fires. Wait in the foreground or with Monitor "
+    "instead, and stop servers and delete crons you started, then do the next step. {rest}"
 )
 MERGE_FORM = "gh pr merge <number> --repo <owner/repo> --match-head-commit <sha> --merge|--squash|--rebase"
 ASK_DENY = "Sleep mode is active and the user is away. Decide this yourself by the sleep skill's tiers and log it."
@@ -154,7 +156,7 @@ def closed_unannounced(state: dict | None) -> bool:
 
 def closed_notice(state: dict) -> str:
     return (f"l3east sleep hook: run is closed ({state['status']}). The merge grant is revoked and ship's "
-            "Sleep runs section no longer applies.")
+            "Sleep runs section no longer applies. Merges and refused pushes stay blocked until the user speaks.")
 
 
 def prompt_context(state: dict) -> str:
@@ -171,6 +173,8 @@ def on_prompt(path: Path, payload: dict, state: dict | None) -> None:
     if WAKE_CMD_RE.match(prompt):
         if is_open(state):
             save(path, {**state, "status": "ended", "ended_at": stamp(), "notified": True})
+        elif state:
+            save(path, {**state, "notified": True})
         return
     match = SLEEP_CMD_RE.match(prompt)
     if match:
@@ -179,7 +183,8 @@ def on_prompt(path: Path, payload: dict, state: dict | None) -> None:
         state = {**base, "status": "active", "merge": merge, "started_at": stamp(), "notified": False}
         save(path, state)
     elif closed_unannounced(state):
-        save(path, {**state, "notified": True})
+        if looks_human(payload):
+            save(path, {**state, "notified": True})
         emit({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": closed_notice(state)}})
         return
     elif not is_open(state):
@@ -200,7 +205,7 @@ def pending_work(payload: dict) -> tuple[bool, str]:
     """Whether pending work will wake the session, and a description of idle work that will not."""
     live = [t for t in payload.get("background_tasks") or []
             if isinstance(t, dict) and t.get("status") in LIVE_TASK_STATUSES]
-    if any(t.get("type") in WAKING_TASK_TYPES for t in live):
+    if any(t.get("type") and t.get("type") not in IDLE_TASK_TYPES for t in live):
         return True, ""
     crons = payload.get("session_crons") or []
     parts = []
@@ -225,6 +230,11 @@ def block(path: Path, state: dict, idle_what: str) -> None:
 
 
 def on_stop(path: Path, payload: dict, state: dict | None) -> None:
+    if state and state["status"] == "expired" and not state.get("expiry_announced"):
+        save(path, {**state, "expiry_announced": True})
+        hours = env_int("L3EAST_SLEEP_TTL_HOURS", DEFAULT_TTL_HOURS)
+        emit({"systemMessage": f"sleep: the run expired after {hours}h without SLEEP-DONE; check the decision log"})
+        return
     if not is_open(state):
         return
     line = last_line(payload.get("last_assistant_message") or "")
@@ -243,14 +253,8 @@ def on_stop(path: Path, payload: dict, state: dict | None) -> None:
         block(path, state, idle_what)
 
 
-def parse_merge(command: str) -> tuple[str, str] | str:
-    """(number, repo) for a command in exactly MERGE_FORM, else the reason it is not allowed."""
-    if re.search(r"[;&|`$<>\n\\]", command):
-        return "a merge must be one plain command (no cd, &&, ;, |, $( ) or redirects)"
-    try:
-        argv = shlex.split(command)
-    except ValueError:
-        return "the merge command could not be parsed"
+def parse_merge(argv: list[str]) -> tuple[str, str] | str:
+    """(number, repo) for argv in exactly MERGE_FORM, else the reason it is not allowed."""
     if argv[:3] != ["gh", "pr", "merge"] or len(argv) < 4 or not argv[3].isdigit():
         return "the merge must start with gh pr merge <number>"
     opts, methods, rest = {}, [], argv[4:]
@@ -288,14 +292,18 @@ def shell_command(payload: dict) -> str | None:
     return command if isinstance(command, str) else ""
 
 
-def shell_denial(command: str, state: dict) -> str | None:
-    if PROTECTED_PUSH_RE.search(command):
-        return "Sleep mode: never push to main or master."
-    if not MERGEISH_RE.search(command):
+def shell_denial(command: str, state: dict, cwd: str | None) -> str | None:
+    reason, merges, argvs = shell_gate.check(command, cwd)
+    if reason:
+        return f"Sleep mode: {reason}."
+    if not merges:
         return None
     if not state["merge"]:
         return "Sleep mode: merge was not granted (the user typed /sleep without merge). Stop at merge-ready."
-    parsed = parse_merge(command)
+    if len(argvs) != 1 or argvs[0] != merges[0] or PLAIN_COMMAND_RE.search(command):
+        parsed = "a merge must be one plain command (no wrappers, cd, &&, ;, |, $( ) or redirects)"
+    else:
+        parsed = parse_merge(argvs[0])
     if isinstance(parsed, str):
         return f"Sleep mode: {parsed}. The only allowed form is: {MERGE_FORM}"
     base = pr_base(*parsed)
@@ -313,7 +321,7 @@ def deny(reason: str) -> None:
 
 def risky_shell(payload: dict) -> bool:
     command = shell_command(payload)
-    return bool(command and (MERGEISH_RE.search(command) or PROTECTED_PUSH_RE.search(command)))
+    return bool(command and shell_gate.looks_risky(command, payload.get("cwd")))
 
 
 def risky_call(payload: dict) -> bool:
@@ -322,8 +330,7 @@ def risky_call(payload: dict) -> bool:
 
 def on_pretool(path: Path, payload: dict, state: dict | None) -> None:
     if closed_unannounced(state) and risky_shell(payload):
-        save(path, {**state, "notified": True})
-        deny(closed_notice(state) + " Ask the user before merging.")
+        deny(closed_notice(state))
         return
     if not is_open(state):
         return
@@ -331,7 +338,7 @@ def on_pretool(path: Path, payload: dict, state: dict | None) -> None:
         deny(ASK_DENY)
         return
     command = shell_command(payload)
-    reason = shell_denial(command, state) if command else None
+    reason = shell_denial(command, state, payload.get("cwd")) if command else None
     if reason:
         deny(reason)
 
@@ -345,11 +352,11 @@ def handle(event: str, payload: dict) -> None:
         return
     path = state_dir() / f"{session_id}.json"
     try:
-        state = expire_if_stale(path, load(path))
+        loaded = load(path)
     except CorruptState as exc:
         on_corrupt(event, path, payload, exc)
         return
-    HANDLERS[event](path, payload, state)
+    HANDLERS[event](path, payload, expire_if_stale(path, loaded))
 
 
 def on_corrupt(event: str, path: Path, payload: dict, exc: CorruptState) -> None:
@@ -366,6 +373,8 @@ def on_corrupt(event: str, path: Path, payload: dict, exc: CorruptState) -> None
     elif WAKE_CMD_RE.match(prompt):
         path.unlink(missing_ok=True)
         emit({"systemMessage": f"sleep: removed the unreadable state file {path}"})
+    else:
+        emit({"systemMessage": f"sleep: state file {path} is unreadable ({exc}); type /{PLUGIN_NAME}:wake to clear it"})
 
 
 def redact(value):
@@ -384,7 +393,7 @@ def debug_log(event: str, payload: dict) -> None:
         state_dir().mkdir(parents=True, exist_ok=True)
         with (state_dir() / "debug.log").open("a") as log:
             log.write(json.dumps({"event": event, "payload": redact(payload)}, default=str) + "\n")
-    except OSError:
+    except (OSError, TypeError, ValueError):
         pass
 
 
