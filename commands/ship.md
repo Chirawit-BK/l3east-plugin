@@ -28,6 +28,20 @@ Follow this checklist, using Bash / Read tools where appropriate:
      - is the branch ahead/behind its remote?
    - If there are uncommitted changes:
      - ask me whether to stop (so I can run `/commit`), or proceed with push-only for already committed work.
+   - If the `pstack:deslop` skill is available, run it over the branch diff against its base before pushing.
+     - If it changes files, stop and show me what it removed, so the cleanup lands in its own commit first.
+
+1b. **Pre-push review (sized)**
+
+   - Skip on main branches (step 2) and when I said to skip review.
+   - Resolve the base: `origin/dev`, else `origin/develop`, else `origin/main` (first one that exists).
+   - Size the change with `git diff --shortstat <base>...HEAD` and `git diff --name-only <base>...HEAD`.
+   - **Small → skip review.** Docs/comments only, or under 100 changed lines in at most 3 files, with nothing below.
+   - **Medium or large → review.** Anything else, and always when the diff touches migrations, auth, permissions, payments, or secrets/config handling.
+   - To review: if the `pstack:interrogate` skill is available, run it on `<base>...HEAD`. Otherwise say the review was skipped because the skill is missing.
+   - Say which size you picked and why, in one line.
+   - Any **Act on** finding → stop before pushing. Report the findings and wait, even when I granted autonomy for this task.
+   - Only **Consider** / **Noted** findings → continue, and list the Consider items under **Notes** in the PR body.
 
 2. **Decide branch category**
 
@@ -52,6 +66,7 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
    - Ask me to confirm before pushing:
      - Show branch name and ahead/behind status.
+     - Skip this ask only when I said at the start of this task that you may handle it yourself. Still show the branch and status in the report.
    - Upon confirmation, run:
      - `git push` (or `git push -u origin <branch>` if no upstream is set yet).
    - After the push, continue depending on the branch category.
@@ -100,19 +115,22 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
      - ...
 
-     ## Testing
+     ## Scope
 
-     - [ ] How it was tested
-     - [ ] Commands or scenarios used
-     - [ ] Any missing tests or follow-ups
+     - What this covers, and what it deliberately leaves out (follow-ups, known gaps)
+
+     ## Verification
+
+     - <command or scenario actually run> → <observed result>
+     - Missing tests or follow-ups
 
      ## 📝 Notes
 
      - ...
 
-     ## Impact / Risk
+     ## Blast Radius
 
-     - What could break?
+     - Who or what this touches, and why that is safe or risky
      - Any migrations, config changes, or deployment notes?
 
      ## Screenshots (if UI)
@@ -125,7 +143,7 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
      - `<short summary>` with a concise description.
      - Concrete bullet points under **Changes**.
-     - Any relevant details under **Testing**, **Notes**, and **Impact / Risk**.
+     - Any relevant details under **Scope**, **Verification**, **Notes**, and **Blast Radius**.
 
    - Show me the final PR title + description as Markdown so I can copy-paste into the Git hosting UI.
    - **Do not** include any AI-signature text like `Generated with Claude Code`.
@@ -166,18 +184,21 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
      - ...
 
-     ## Testing
+     ## Scope
 
-     - [ ] How it was tested
-     - [ ] Commands or scenarios used
+     - What this covers, and what it leaves out
+
+     ## Verification
+
+     - <command or scenario actually run> → <observed result>
 
      ## Notes
 
      - ...
 
-     ## Impact / Risk
+     ## Blast Radius
 
-     - ...
+     - Who or what this touches, and why that is safe or risky
      ```
 
    - Fill based on the recent commits and inferred behavior change.
@@ -208,18 +229,21 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
      - ...
 
-     ## Testing
+     ## Scope
 
-     - [ ] How it was tested
-     - [ ] Commands or scenarios used
+     - What this covers, and what it leaves out
+
+     ## Verification
+
+     - <command or scenario actually run> → <observed result>
 
      ## Notes
 
      - ...
 
-     ## Impact / Risk
+     ## Blast Radius
 
-     - ...
+     - Who or what this touches, and why that is safe or risky
      ```
 
    - Fill in based on the latest commits/diff.
@@ -236,6 +260,7 @@ Follow this checklist, using Bash / Read tools where appropriate:
        ```
 
      - Always show me the title and body first, and ask for explicit confirmation before running any `gh pr` command.
+     - Skip that confirmation only when I said at the start of this task that you may handle it yourself.
 
 ---
 
@@ -243,4 +268,6 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
 - When in doubt, ask me instead of guessing.
 - Keep explanations short and focused: this is a “push & PR” command.
+- PR body: short, simple sentences for a reviewer who already has the diff. Drop any section with nothing to say. Keep the body under about 40 lines.
+- Verification lists only what was actually run, with its result. Never write a check you did not run.
 - Never add "Generated with Claude Code" or similar AI-signature text into commits or PRs.
