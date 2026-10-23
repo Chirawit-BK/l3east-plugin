@@ -20,7 +20,7 @@ The user typed `/l3east:sleep` and left. The task is the work already given in t
 - **Merge only when the hook's context line says `merge granted: yes`** (the user typed `/l3east:sleep merge`). The hook restates the grant on every prompt and continuation; trust the latest one. Without the grant, stop at merge-ready.
 - A granted merge still needs every gate: CI green, no **Act on** from ship's interrogate, verified on the real surface, base is not `main`/`master` or a prod branch. Pick a method the repo allows (`gh api repos/{owner}/{repo} --jq '[.allow_merge_commit,.allow_squash_merge,.allow_rebase_merge]'`), then merge with exactly this one plain command, nothing chained:
   `gh pr merge <number> --repo <owner/repo> --match-head-commit <verified-sha> --merge|--squash|--rebase`
-  The hook denies every other merge form (`-R`, `cd ... &&`, `gh api .../merge`, `--admin`, `--auto`, `--delete-branch`), a merge without the grant, a merge into `main`/`master`, and any push to `main`/`master`. Any gate fails → don't merge, log why, keep going on what's left.
+  The hook denies every other merge form (`-R`, `cd ... &&`, `gh api .../merge`, `--admin`, `--auto`, `--delete-branch`), a merge without the grant, a merge into `main`/`master`, and pushes to `main`/`master`/`dev`/`develop`. Push as `git push <remote> <branch>` with the branch named. Any gate fails → don't merge, log why, keep going on what's left.
 - `/l3east:ship` has a **Sleep runs** section: follow it.
 - Never, even here: force-push to a shared branch, deploy, prod migration, deleting data. Messages to real people are drafted for the morning report, never sent.
 
