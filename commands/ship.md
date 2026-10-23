@@ -14,12 +14,12 @@ When I run this command, it means:
   - git log (recent commits)
   - current branch name
 
-**Sleep runs.** When the sleep hook has said `l3east sleep hook: run is active`, I am away and these replace the steps below:
+**Sleep runs.** When the latest sleep hook line in context says `l3east sleep hook: run is active` (not `run is closed`), I am away and these replace the steps below:
 
 - Uncommitted changes (step 1): commit them yourself as their own unit, don't ask.
 - An **Act on** finding (step 1b): fix it and run ship again, at most 2 rounds. Still failing → log it as blocked in the sleep log and go on with other work. Don't end the run to wait.
 - Push and `gh pr create` (steps 3, 8): no confirmations.
-- Babysit (step 9): don't turn on Auto-fix or start a babysit loop. Wait on CI with `gh pr checks --watch` and handle review comments yourself. Merge only when the hook says `merge granted: yes` and every gate in `/l3east:sleep` holds; otherwise stop at merge-ready and keep the sleep run going.
+- Babysit (step 9): don't turn on Auto-fix or start a babysit loop. Wait on CI with `gh pr checks --watch`. Fix what review comments ask for, and draft the replies for the morning report instead of posting them. Merge only when the hook says `merge granted: yes` and every gate in `/l3east:sleep` holds, in the one form it names; otherwise stop at merge-ready and keep the sleep run going.
 - "Ask me" anywhere: decide by the sleep skill's tiers and log it.
 
 ---
