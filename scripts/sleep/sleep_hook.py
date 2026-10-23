@@ -31,7 +31,7 @@ SHA_RE = re.compile(r"[0-9a-fA-F]{7,40}")
 PLAIN_COMMAND_RE = re.compile(r"[`$<>\\]")
 MERGE_METHODS = {"--merge", "--squash", "--rebase"}
 MACHINE_SOURCES = {"system", "loop_wakeup", "schedule_wakeup", "poll_event", "sdk"}
-MACHINE_PROMPT_RE = re.compile(r"^\s*(?:<task-notification>|Your claude\.ai usage limit has reset)")
+MACHINE_PROMPT_RE = re.compile(r"<task-notification>|usage limit has reset")
 IDLE_TASK_TYPES = {"shell"}
 LIVE_TASK_STATUSES = {"running", "pending"}
 PROTECTED_BASES = {"main", "master"}
@@ -205,7 +205,7 @@ def pending_work(payload: dict) -> tuple[bool, str]:
     """Whether pending work will wake the session, and a description of idle work that will not."""
     live = [t for t in payload.get("background_tasks") or []
             if isinstance(t, dict) and t.get("status") in LIVE_TASK_STATUSES]
-    if any(t.get("type") not in IDLE_TASK_TYPES for t in live):
+    if any(t.get("type") and t.get("type") not in IDLE_TASK_TYPES for t in live):
         return True, ""
     crons = payload.get("session_crons") or []
     parts = []
@@ -230,6 +230,11 @@ def block(path: Path, state: dict, idle_what: str) -> None:
 
 
 def on_stop(path: Path, payload: dict, state: dict | None) -> None:
+    if state and state["status"] == "expired" and not state.get("expiry_announced"):
+        save(path, {**state, "expiry_announced": True})
+        hours = env_int("L3EAST_SLEEP_TTL_HOURS", DEFAULT_TTL_HOURS)
+        emit({"systemMessage": f"sleep: the run expired after {hours}h without SLEEP-DONE; check the decision log"})
+        return
     if not is_open(state):
         return
     line = last_line(payload.get("last_assistant_message") or "")
@@ -287,25 +292,16 @@ def shell_command(payload: dict) -> str | None:
     return command if isinstance(command, str) else ""
 
 
-def shell_denial(command: str, state: dict) -> str | None:
-    try:
-        argvs = shell_gate.segments(command)
-    except ValueError:
-        if shell_gate.RISKY_WORD_RE.search(command):
-            return "Sleep mode: this command could not be parsed, and it mentions merge or push. Rewrite it plainly."
-        return None
-    if shell_gate.SUBSTITUTION_RE.search(command) and shell_gate.RISKY_WORD_RE.search(command):
-        return "Sleep mode: no $( ), backticks or <( ) in a command that merges or pushes. Run it plainly."
-    for argv in argvs:
-        problem = shell_gate.push_problem(argv)
-        if problem:
-            return f"Sleep mode: {problem}."
-    if not any(shell_gate.is_merge(argv) for argv in argvs):
+def shell_denial(command: str, state: dict, cwd: str | None) -> str | None:
+    reason, merges, argvs = shell_gate.check(command, cwd)
+    if reason:
+        return f"Sleep mode: {reason}."
+    if not merges:
         return None
     if not state["merge"]:
         return "Sleep mode: merge was not granted (the user typed /sleep without merge). Stop at merge-ready."
-    if len(argvs) != 1 or PLAIN_COMMAND_RE.search(command):
-        parsed = "a merge must be one plain command (no cd, &&, ;, |, $( ) or redirects)"
+    if len(argvs) != 1 or argvs[0] != merges[0] or PLAIN_COMMAND_RE.search(command):
+        parsed = "a merge must be one plain command (no wrappers, cd, &&, ;, |, $( ) or redirects)"
     else:
         parsed = parse_merge(argvs[0])
     if isinstance(parsed, str):
@@ -325,7 +321,7 @@ def deny(reason: str) -> None:
 
 def risky_shell(payload: dict) -> bool:
     command = shell_command(payload)
-    return bool(command and shell_gate.looks_risky(command))
+    return bool(command and shell_gate.looks_risky(command, payload.get("cwd")))
 
 
 def risky_call(payload: dict) -> bool:
@@ -342,7 +338,7 @@ def on_pretool(path: Path, payload: dict, state: dict | None) -> None:
         deny(ASK_DENY)
         return
     command = shell_command(payload)
-    reason = shell_denial(command, state) if command else None
+    reason = shell_denial(command, state, payload.get("cwd")) if command else None
     if reason:
         deny(reason)
 
@@ -360,11 +356,7 @@ def handle(event: str, payload: dict) -> None:
     except CorruptState as exc:
         on_corrupt(event, path, payload, exc)
         return
-    state = expire_if_stale(path, loaded)
-    if event == "stop" and is_open(loaded) and not is_open(state):
-        emit({"systemMessage": f"sleep: the run expired after {env_int('L3EAST_SLEEP_TTL_HOURS', DEFAULT_TTL_HOURS)}h"})
-        return
-    HANDLERS[event](path, payload, state)
+    HANDLERS[event](path, payload, expire_if_stale(path, loaded))
 
 
 def on_corrupt(event: str, path: Path, payload: dict, exc: CorruptState) -> None:

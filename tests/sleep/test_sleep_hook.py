@@ -122,8 +122,7 @@ class SleepHookTests(unittest.TestCase):
 
     def test_prompt_that_looks_human_gets_wake_hint(self):
         self.prompt("/l3east:sleep")
-        for text, extra in (("how did it go?", {}), ("how did it go?", {"source": "user"}),
-                            ("did it say: usage limit has reset?", {})):
+        for text, extra in (("how did it go?", {}), ("how did it go?", {"source": "user"})):
             out = self.prompt(text, **extra)
             self.assertIn("/l3east:wake", out["systemMessage"], text)
         self.assertEqual(self.state()["status"], "active")
@@ -171,8 +170,21 @@ class SleepHookTests(unittest.TestCase):
         self.write_state(status="active", merge=True, continuations=3, budget=40, started_at=old)
         self.assertIn("expired", self.stop("step")["systemMessage"])
         self.assertEqual(self.state()["status"], "expired")
+        self.assertIsNone(self.stop("again"))
         for _ in range(2):
             self.assertIn("run is closed (expired)", self.reason(self.shell(GOOD_MERGE)))
+
+    def test_expiry_first_seen_by_a_tool_call_is_still_announced_at_stop(self):
+        old = (datetime.now(timezone.utc) - timedelta(hours=19)).isoformat()
+        self.write_state(status="active", merge=False, continuations=3, budget=40, started_at=old)
+        self.assertIsNone(self.shell("ls"))
+        self.assertEqual(self.state()["status"], "expired")
+        self.assertIn("expired", self.stop("step")["systemMessage"])
+
+    def test_task_without_a_type_counts_as_idle(self):
+        self.prompt("/l3east:sleep")
+        self.assertEqual(self.stop("waiting", background_tasks=[{"id": "x", "status": "running"}])["decision"],
+                         "block")
 
     # stop
 
@@ -315,13 +327,13 @@ class SleepHookTests(unittest.TestCase):
         ]
         with mock.patch.object(sleep_hook, "pr_base", return_value="dev") as base:
             for cmd in bad:
-                self.assertIn(sleep_hook.MERGE_FORM, self.reason(self.shell(cmd)), cmd)
+                self.assertIn("gh pr merge", self.reason(self.shell(cmd)), cmd)
             self.assertIn("$( )", self.reason(self.shell("echo $(" + GOOD_MERGE + ")")))
             base.assert_not_called()
+            self.assertIn("one plain command", self.reason(self.shell(f'bash -c "{GOOD_MERGE}"')))
+            base.assert_not_called()
             self.assertIsNone(self.shell(GOOD_MERGE))
-            self.assertIsNone(self.shell(f'bash -c "{GOOD_MERGE}"'))
-            self.assertEqual(base.call_count, 2)
-            base.assert_called_with("5", "o/r")
+            base.assert_called_once_with("5", "o/r")
 
     def test_ordinary_commands_that_mention_merge_pass_without_a_grant(self):
         self.prompt("/l3east:sleep")
@@ -358,7 +370,7 @@ class SleepHookTests(unittest.TestCase):
             "git push --all origin": "--all",
             "git push --mirror origin": "--mirror",
             "git push origin :feat/x": "deleting",
-            "git push -f origin feat/x": "force-push",
+            "git push -f origin feat/x": "-f are not allowed",
             "git push origin +feat/x": "force-push",
             "env GIT_TRACE=1 git push origin main": "never push to main",
         }
