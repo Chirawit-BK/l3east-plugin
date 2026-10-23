@@ -26,7 +26,7 @@ _TEXT_URL_RE = re.compile(r"""(?i)\b([a-z][a-z0-9+.\-]*://[^\s"'<>]+)""")  # any
 _TEXT_BEARER_RE = re.compile(r"(?i)\bbearer\s+\S+")
 _TEXT_AUTH_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(authorization)\b\s*[=:]\s*(?:\w+\s+)?\S+")
 _TEXT_USER_RE = re.compile(r"(?<![\w-])(-[A-Za-z]*u|--user)(\s+|=)(\S*:\S+)")  # curl -u / -su / --user[=] user:pass
-_TEXT_KEYVAL_RE = re.compile(r"(?i)([A-Za-z0-9_]*" + _SECRET_WORDS + r"[A-Za-z0-9_]*)\s*[=:]\s*\S+")
+_TEXT_KEYVAL_RE = re.compile(r"(?i)(?<![A-Za-z0-9_])([A-Za-z0-9_]*" + _SECRET_WORDS + r"[A-Za-z0-9_]*)\s*[=:]\s*\S+")
 _TEXT_FLAG_RE = re.compile(r"(?i)(?<![\w-])(--?[\w-]*(?:" + _SECRET_WORDS + r"|authorization)[\w-]*)\s+(\S+)")
 _TEXT_TOKEN_RE = re.compile(r"[^\s=:,\"']+")
 

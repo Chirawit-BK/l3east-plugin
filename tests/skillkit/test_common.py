@@ -1,4 +1,5 @@
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -122,6 +123,16 @@ class MaskTextTests(unittest.TestCase):
         out = common.mask_text("srv --header x eyJa1.eyJb2.sig3 end")
         self.assertNotIn("eyJa1", out)
         self.assertIn("end", out)
+
+    def test_long_runs_are_linear(self):
+        # a 20k-char run is one long blob, so it collapses to the mask; the point is the time
+        t = time.perf_counter()
+        out = common.mask_text("a" * 20000)
+        self.assertLess(time.perf_counter() - t, 1.0)
+        self.assertEqual(out, "***")
+        t = time.perf_counter()
+        common.mask_text("token" * 400)
+        self.assertLess(time.perf_counter() - t, 1.0)
 
     def test_url_inside_text_goes_through_mask_url(self):
         out = common.mask_text("curl https://u:pwsecret@h/m?x=1 -o f")
