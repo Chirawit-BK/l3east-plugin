@@ -31,6 +31,18 @@ Follow this checklist, using Bash / Read tools where appropriate:
    - If the `pstack:deslop` skill is available, run it over the branch diff against its base before pushing.
      - If it changes files, stop and show me what it removed, so the cleanup lands in its own commit first.
 
+1b. **Pre-push review (sized)**
+
+   - Skip on main branches (step 2) and when I said to skip review.
+   - Resolve the base: `origin/dev`, else `origin/develop`, else `origin/main` (first one that exists).
+   - Size the change with `git diff --shortstat <base>...HEAD` and `git diff --name-only <base>...HEAD`.
+   - **Small → skip review.** Docs/comments only, or under 100 changed lines in at most 3 files, with nothing below.
+   - **Medium or large → review.** Anything else, and always when the diff touches migrations, auth, permissions, payments, or secrets/config handling.
+   - To review: if the `pstack:interrogate` skill is available, run it on `<base>...HEAD`. Otherwise say the review was skipped because the skill is missing.
+   - Say which size you picked and why, in one line.
+   - Any **Act on** finding → stop before pushing. Report the findings and wait, even when I granted autonomy for this task.
+   - Only **Consider** / **Noted** findings → continue, and list the Consider items under **Notes** in the PR body.
+
 2. **Decide branch category**
 
    Classify the current branch into one of these:
