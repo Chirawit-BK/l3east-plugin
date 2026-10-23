@@ -14,6 +14,14 @@ When I run this command, it means:
   - git log (recent commits)
   - current branch name
 
+**Sleep runs.** When the latest sleep hook line in context says `l3east sleep hook: run is active` (not `run is closed`), I am away and these replace the steps below:
+
+- Uncommitted changes (step 1): commit them yourself as their own unit, don't ask.
+- An **Act on** finding (step 1b): fix it and run ship again, at most 2 rounds. Still failing → log it as blocked in the sleep log and go on with other work. Don't end the run to wait.
+- Push and `gh pr create` (steps 3, 8): no confirmations.
+- Babysit (step 9): don't turn on Auto-fix or start a babysit loop. Wait on CI with `gh pr checks --watch`. Fix what review comments ask for, and draft the replies for the morning report instead of posting them. Merge only when the hook says `merge granted: yes` and every gate in `/l3east:sleep` holds, in the one form it names; otherwise stop at merge-ready and keep the sleep run going.
+- "Ask me" anywhere: decide by the sleep skill's tiers and log it.
+
 ---
 
 ## 🔁 Flow
@@ -41,7 +49,7 @@ Follow this checklist, using Bash / Read tools where appropriate:
    - **Medium or large → review.** Anything else, and always when the diff touches migrations, auth, permissions, payments, or secrets/config handling.
    - To review: if the `pstack:interrogate` skill is available, run it on `<base>...HEAD`. Otherwise say the review was skipped because the skill is missing.
    - Say which size you picked and why, in one line.
-   - Any **Act on** finding → stop before pushing. Report the findings and wait, even when I granted autonomy for this task.
+   - Any **Act on** finding → stop before pushing. Report the findings and wait, even when I granted autonomy for this task. During a sleep run, follow **Sleep runs** above instead.
    - Only **Consider** / **Noted** findings → continue, and list the Consider items under **Notes** in the PR body.
 
 2. **Decide branch category**
@@ -265,7 +273,7 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
 9. **Babysit the new PR (autonomy grant only)**
 
-   - Run this only when I granted autonomy at the start of this task and step 8 opened a PR. Without a grant, end the flow after the PR is open.
+   - Run this only when I granted autonomy at the start of this task and step 8 opened a PR. Without a grant, end the flow after the PR is open. During a sleep run, follow **Sleep runs** above instead of this step.
    - In the Claude desktop app, when the app offers Auto-fix for this PR, turn it on instead of starting a loop. The app already watches CI, conflicts and review comments, so a second watcher would fight it.
    - Otherwise, if the `pstack:babysit` skill is available, start it on this PR as a background loop and keep it running until the PR is merge-ready: checks green, review comments handled, and the branch merges cleanly.
    - It stops early on babysit's own stop rules: three fix rounds that are still not green, or a fix that needs a design choice. Report what is left.
