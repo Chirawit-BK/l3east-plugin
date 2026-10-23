@@ -8,15 +8,23 @@ Personal Claude Code plugin. Install from the local marketplace `l3east-local`.
 | `/l3east:audit` | review a PR with a zero-context subagent and give a merge verdict |
 | `/l3east:skill-health` | audit every loaded skill, command, hook and MCP server; report + draft routing block |
 | `/l3east:skill-compat <candidate>` | check one new skill or plugin against the installed set before installing |
-| `/l3east:sleep [merge] <task>` | run one task unattended to merge-ready (or merged, with `merge`), logging every decision |
+| `/l3east:sleep [merge]` | finish the work already given in this session unattended, to merge-ready (or merged, with `merge`), logging every decision |
+| `/l3east:wake` | end a sleep run early because you are back |
 
 `skill-health` and `skill-compat` share `scripts/skillkit/` (Python 3 stdlib, run with `python3 -I`), `references/skillkit/` and the `skillkit-judge` agent (`agents/skillkit-judge.md`: Read only, no shell, no file writes).
 
-`sleep` ships two hooks (`hooks/hooks.json` → `scripts/sleep/sleep_hook.py`). Typing `/l3east:sleep` opens `~/.claude/l3east/sleep/<session_id>.json`; any other prompt closes it. While it is open, the Stop hook sends Claude back to work until its last message ends with `SLEEP-DONE` or `SLEEP-BLOCKED: <reason>`, background work is running, or the continuation budget is spent (`L3EAST_SLEEP_BUDGET`, default 40). `L3EAST_SLEEP_DEBUG=1` logs every hook payload to `~/.claude/l3east/sleep/debug.log`.
+`sleep` ships three hooks (`hooks/hooks.json` → `scripts/sleep/sleep_hook.py`), keyed by session in `$CLAUDE_CONFIG_DIR/l3east/sleep/<session_id>.json`:
+
+- UserPromptSubmit: `/l3east:sleep` opens a run (`merge` as the first word grants merge) and tells Claude the grant; `/l3east:wake` closes it. Every other prompt leaves it alone, because usage-limit auto-continue, task notifications and loop wakeups also arrive as prompts.
+- Stop: while a run is open, sends Claude back to work until its last line is `SLEEP-DONE` or `SLEEP-BLOCKED: <reason>`. It lets the turn end while background tasks or session crons are pending, since they wake the session. The last of the continuation budget (`L3EAST_SLEEP_BUDGET`, default 40) asks for the morning report.
+- PreToolUse: denies `AskUserQuestion` while a run is open.
+
+`L3EAST_SLEEP_DEBUG=1` appends every hook payload (string fields cut to 300 chars) to `debug.log` in that folder.
 
 Before a sleep run:
 
-- Usage limits: the desktop app's **Auto-continue when limits reset** must be on (session limit only). In the terminal CLI, `autoContinueAtUsageLimit` (default `true`) does the same, for interactive sessions only, re-armed at most twice in a row, and not for a weekly reset more than 24 hours away.
+- Usage limits: turn on the desktop app's **Auto-continue when limits reset**. The terminal CLI has `autoContinueAtUsageLimit` for interactive sessions. Neither covers a weekly limit that resets days later.
+- Claude Code ends a turn after 8 stop-hook continuations in a row with no tool call, so the skill tells Claude to wait with tools.
 - The app's "Keep computer awake while Claude works" prevents idle sleep only. Keep the lid open.
 
 Tests:
