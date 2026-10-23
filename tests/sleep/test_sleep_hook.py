@@ -6,21 +6,29 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "sleep"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "sleep"))
 import sleep_hook  # noqa: E402
 
 AUTO_CONTINUE = "Your claude.ai usage limit has reset. Continue the task you were working on."
 TASK_NOTIFICATION = "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>"
+SUBAGENT = {"id": "a1", "type": "subagent", "status": "running", "description": "review"}
+SHELL = {"id": "b1", "type": "shell", "status": "running", "description": "npm run dev"}
+CRON = {"id": "c1", "schedule": "*/10 * * * *", "recurring": True}
 
 
 class SleepHookTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._old = {k: os.environ.get(k) for k in ("CLAUDE_CONFIG_DIR", "L3EAST_SLEEP_BUDGET")}
+        keys = ("CLAUDE_CONFIG_DIR", "L3EAST_SLEEP_BUDGET", "L3EAST_SLEEP_TTL_HOURS", "L3EAST_SLEEP_DEBUG")
+        self._old = {k: os.environ.get(k) for k in keys}
+        for k in keys:
+            os.environ.pop(k, None)
         os.environ["CLAUDE_CONFIG_DIR"] = self.tmp.name
-        os.environ.pop("L3EAST_SLEEP_BUDGET", None)
 
     def tearDown(self):
         for k, v in self._old.items():
@@ -44,11 +52,21 @@ class SleepHookTests(unittest.TestCase):
         p = self.state_file()
         return json.loads(p.read_text()) if p.exists() else None
 
-    def prompt(self, text):
-        return self.run_event("prompt", {"prompt": text})
+    def write_state(self, **fields):
+        self.state_file().parent.mkdir(parents=True, exist_ok=True)
+        self.state_file().write_text(json.dumps(fields))
+
+    def prompt(self, text, **extra):
+        return self.run_event("prompt", {"prompt": text, **extra})
 
     def stop(self, message, **extra):
         return self.run_event("stop", {"last_assistant_message": message, **extra})
+
+    def bash(self, command):
+        return self.run_event("pretool", {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": "/tmp"})
+
+    def denied(self, out):
+        return bool(out) and out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     # opening
 
@@ -63,86 +81,104 @@ class SleepHookTests(unittest.TestCase):
         self.assertIs(self.state()["merge"], True)
         self.assertIn("merge granted: yes", out["hookSpecificOutput"]["additionalContext"])
 
-    def test_merge_word_later_in_text_does_not_grant(self):
+    def test_merge_word_later_or_on_next_line_does_not_grant(self):
         self.prompt("/l3east:sleep fix the merge-queue bug, then merge it")
         self.assertIs(self.state()["merge"], False)
+        self.state_file().unlink()
+        self.prompt("/l3east:sleep\nmerge conflicts are expected, resolve them")
+        self.assertIs(self.state()["merge"], False)
 
-    def test_bare_sleep_alias_opens(self):
-        self.prompt("  /sleep")
-        self.assertEqual(self.state()["status"], "active")
-
-    def test_lookalikes_do_not_open(self):
-        for text in ("how does /l3east:sleep work?", "/sleeper go", "/l3east:sleep-notes", "sleep"):
+    def test_only_this_plugins_command_opens(self):
+        for text in ("/sleep", "/other:sleep", "how does /l3east:sleep work?", "/l3east:sleeper",
+                     "/l3east:sleep-notes", "sleep"):
             self.prompt(text)
         self.assertIsNone(self.state())
 
-    def test_retyping_sleep_keeps_counters(self):
-        self.prompt("/l3east:sleep")
-        self.stop("step 1")
+    def test_retyping_sleep_keeps_counters_and_updates_grant(self):
         self.prompt("/l3east:sleep merge")
+        self.stop("step 1")
+        self.prompt("/l3east:sleep")
         st = self.state()
         self.assertEqual(st["continuations"], 1)
-        self.assertIs(st["merge"], True)
+        self.assertIs(st["merge"], False)
 
     # staying open
 
-    def test_injected_and_ordinary_prompts_keep_run_open(self):
-        self.prompt("/l3east:sleep")
-        for text in (AUTO_CONTINUE, TASK_NOTIFICATION, "check CI", "hello"):
-            self.prompt(text)
+    def test_injected_and_ordinary_prompts_keep_run_open_and_restate_grant(self):
+        self.prompt("/l3east:sleep merge")
+        for text in (AUTO_CONTINUE, TASK_NOTIFICATION, "check CI"):
+            out = self.prompt(text)
+            self.assertIn("merge granted: yes", out["hookSpecificOutput"]["additionalContext"])
+            self.assertNotIn("systemMessage", out)
         self.assertEqual(self.state()["status"], "active")
+
+    def test_user_typed_prompt_during_run_gets_wake_hint(self):
+        self.prompt("/l3east:sleep")
+        out = self.prompt("how did it go?", source="user")
+        self.assertIn("/l3east:wake", out["systemMessage"])
+        self.assertEqual(self.state()["status"], "active")
+
+    def test_prompts_outside_a_run_are_silent(self):
+        self.assertIsNone(self.prompt("hello", source="user"))
 
     def test_wake_closes_run(self):
         self.prompt("/l3east:sleep")
         self.prompt("/l3east:wake")
         self.assertEqual(self.state()["status"], "ended")
 
-    def test_wake_without_run_does_nothing(self):
-        self.prompt("/l3east:wake")
-        self.assertIsNone(self.state())
+    def test_stale_run_expires(self):
+        old = (datetime.now(timezone.utc) - timedelta(hours=19)).isoformat()
+        self.write_state(status="active", merge=True, continuations=3, budget=40, started_at=old)
+        self.assertIsNone(self.stop("step"))
+        self.assertEqual(self.state()["status"], "expired")
+        self.prompt("/l3east:sleep")
+        self.assertEqual(self.state()["continuations"], 0)
+        self.assertIs(self.state()["merge"], False)
 
     # stop
 
     def test_stop_without_run_allows(self):
         self.assertIsNone(self.stop("hi"))
 
-    def test_stop_while_active_blocks_and_counts(self):
-        self.prompt("/l3east:sleep")
+    def test_stop_while_active_blocks_and_restates_grant(self):
+        self.prompt("/l3east:sleep merge")
         out = self.stop("step 1 done")
         self.assertEqual(out["decision"], "block")
-        self.assertIn("SLEEP-DONE", out["reason"])
-        self.assertIn("wait with a tool", out["reason"])
+        for text in ("SLEEP-DONE", "Wait for CI", "with a tool", "merge granted: yes", "/l3east:sleep"):
+            self.assertIn(text, out["reason"])
         self.assertEqual(self.state()["continuations"], 1)
 
-    def test_done_marker_on_last_line_closes(self):
-        self.prompt("/l3east:sleep")
-        self.assertIsNone(self.stop("report\n\nSLEEP-DONE\n"))
-        self.assertEqual(self.state()["status"], "done")
-
-    def test_formatted_done_marker_is_accepted(self):
-        for marker in ("`SLEEP-DONE`", "**SLEEP-DONE**", "SLEEP-DONE."):
+    def test_done_marker_variants_on_last_line_close(self):
+        for marker in ("SLEEP-DONE", "`SLEEP-DONE`", "**SLEEP-DONE**", "SLEEP-DONE.", "`SLEEP-DONE`."):
             self.prompt("/l3east:sleep")
-            self.assertIsNone(self.stop(f"report\n{marker}"), marker)
+            self.assertIsNone(self.stop(f"report\n\n{marker}\n"), marker)
             self.assertEqual(self.state()["status"], "done", marker)
             self.state_file().unlink()
 
     def test_marker_not_on_last_line_keeps_working(self):
         self.prompt("/l3east:sleep")
-        out = self.stop("```\nSLEEP-DONE\n```\nI will print it at the end.")
-        self.assertEqual(out["decision"], "block")
+        self.assertEqual(self.stop("```\nSLEEP-DONE\n```\nI will print it at the end.")["decision"], "block")
 
-    def test_blocked_marker_needs_a_reason(self):
+    def test_blocked_marker_needs_a_reason_and_accepts_bold(self):
         self.prompt("/l3east:sleep")
         self.assertEqual(self.stop("report\nSLEEP-BLOCKED")["decision"], "block")
-        self.assertIsNone(self.stop("report\nSLEEP-BLOCKED: needs prod creds"))
+        self.assertEqual(self.stop("report\nSLEEP-BLOCKED: **")["decision"], "block")
+        self.assertIsNone(self.stop("report\n**SLEEP-BLOCKED**: needs prod creds"))
         self.assertEqual(self.state()["status"], "blocked")
 
-    def test_pending_background_work_or_cron_allows_without_counting(self):
+    def test_pending_subagent_lets_turn_end_up_to_a_cap(self):
         self.prompt("/l3east:sleep")
-        self.assertIsNone(self.stop("waiting", background_tasks=[{"id": "a1"}]))
-        self.assertIsNone(self.stop("waiting", session_crons=[{"id": "c1"}]))
-        self.assertEqual(self.state()["status"], "active")
+        for _ in range(sleep_hook.PENDING_ALLOW_CAP):
+            self.assertIsNone(self.stop("waiting", background_tasks=[SUBAGENT]))
         self.assertEqual(self.state()["continuations"], 0)
+        self.assertEqual(self.stop("waiting", background_tasks=[SUBAGENT])["decision"], "block")
+        self.assertEqual(self.state()["pending_allows"], 0)
+
+    def test_only_shells_or_crons_pending_blocks_and_names_them(self):
+        self.prompt("/l3east:sleep")
+        out = self.stop("waiting", background_tasks=[SHELL], session_crons=[CRON])
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("1 background shell(s) and 1 session cron(s)", out["reason"])
 
     def test_last_continuation_asks_for_the_report_then_budget_closes(self):
         os.environ["L3EAST_SLEEP_BUDGET"] = "2"
@@ -161,46 +197,101 @@ class SleepHookTests(unittest.TestCase):
         self.stop("SLEEP-DONE")
         self.assertIsNone(self.stop("more"))
 
-    def test_corrupt_state_warns_and_does_not_crash(self):
-        self.state_file().parent.mkdir(parents=True)
-        self.state_file().write_text("{not json")
-        out = self.stop("step")
-        self.assertIn("unreadable", out["systemMessage"])
+    # corrupt state
+
+    def test_unparseable_or_partial_state_warns_on_stop(self):
+        for content in ("{not json", json.dumps({"status": "active", "budget": 40, "merge": False}),
+                        json.dumps({"status": "active", "budget": "x", "merge": False, "continuations": 0,
+                                    "started_at": "2026-01-01T00:00:00+00:00"})):
+            self.state_file().parent.mkdir(parents=True, exist_ok=True)
+            self.state_file().write_text(content)
+            self.assertIn("unreadable", self.stop("step")["systemMessage"], content)
+
+    def test_corrupt_state_fails_closed_on_ask_and_merge_and_sleep_replaces_it(self):
+        self.write_state(status="active")
+        self.assertTrue(self.denied(self.run_event("pretool", {"tool_name": "AskUserQuestion"})))
+        self.assertTrue(self.denied(self.bash("gh pr merge 5 --merge")))
+        self.assertIsNone(self.bash("ls"))
         self.prompt("/l3east:sleep")
         self.assertEqual(self.state()["status"], "active")
 
-    # AskUserQuestion
+    # PreToolUse
 
-    def test_ask_user_question_is_denied_while_active(self):
-        self.prompt("/l3east:sleep")
-        out = self.run_event("pretool", {"tool_name": "AskUserQuestion"})
-        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
-
-    def test_ask_user_question_is_allowed_otherwise(self):
+    def test_ask_user_question_is_denied_only_during_a_run(self):
         self.assertIsNone(self.run_event("pretool", {"tool_name": "AskUserQuestion"}))
         self.prompt("/l3east:sleep")
+        self.assertTrue(self.denied(self.run_event("pretool", {"tool_name": "AskUserQuestion"})))
         self.stop("SLEEP-DONE")
         self.assertIsNone(self.run_event("pretool", {"tool_name": "AskUserQuestion"}))
 
-    # entry point
+    def test_merge_denied_without_grant(self):
+        self.prompt("/l3east:sleep")
+        out = self.bash("gh pr merge 5 --merge --match-head-commit abc")
+        self.assertIn("not granted", out["hookSpecificOutput"]["permissionDecisionReason"])
 
-    def test_cli_entry_with_debug_on_fresh_home(self):
-        script = Path(sleep_hook.__file__)
-        env = {**os.environ, "L3EAST_SLEEP_DEBUG": "1"}
-        for event, payload in (("prompt", {"session_id": "s1", "prompt": "/l3east:sleep"}),
-                               ("stop", {"session_id": "s1", "last_assistant_message": "step 1"})):
-            res = subprocess.run([sys.executable, "-I", str(script), event], input=json.dumps(payload),
-                                 capture_output=True, text=True, env=env)
-            self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(json.loads(res.stdout)["decision"], "block")
-        self.assertTrue((Path(self.tmp.name) / "l3east" / "sleep" / "debug.log").exists())
+    def test_merge_denied_without_head_guard(self):
+        self.prompt("/l3east:sleep merge")
+        out = self.bash("gh pr merge 5 --squash")
+        self.assertIn("--match-head-commit", out["hookSpecificOutput"]["permissionDecisionReason"])
 
-    def test_non_object_payload_and_bad_session_id_are_ignored(self):
-        script = Path(sleep_hook.__file__)
-        res = subprocess.run([sys.executable, "-I", str(script), "stop"], input="[]", capture_output=True, text=True)
+    def test_merge_into_main_denied_and_feature_base_allowed(self):
+        self.prompt("/l3east:sleep merge")
+        cmd = "gh pr merge 5 --repo o/r --squash --match-head-commit abc"
+        with mock.patch.object(sleep_hook, "pr_base", return_value="main"):
+            self.assertIn("never merge into main", self.bash(cmd)["hookSpecificOutput"]["permissionDecisionReason"])
+        with mock.patch.object(sleep_hook, "pr_base", return_value=None):
+            self.assertTrue(self.denied(self.bash(cmd)))
+        with mock.patch.object(sleep_hook, "pr_base", return_value="dev"):
+            self.assertIsNone(self.bash(cmd))
+
+    def test_pr_base_reads_target_and_repo(self):
+        done = subprocess.CompletedProcess([], 0, stdout="develop\n", stderr="")
+        with mock.patch.object(sleep_hook.subprocess, "run", return_value=done) as run:
+            base = sleep_hook.pr_base("cd x && gh pr merge 12 --repo o/r --merge --match-head-commit abc", "/w")
+        self.assertEqual(base, "develop")
+        self.assertEqual(run.call_args.args[0],
+                         ["gh", "pr", "view", "12", "--json", "baseRefName", "-q", ".baseRefName", "--repo", "o/r"])
+
+    def test_other_bash_commands_pass_during_a_run(self):
+        self.prompt("/l3east:sleep")
+        self.assertIsNone(self.bash("gh pr view 5"))
+
+    # entry point and wiring
+
+    def run_cli(self, event, payload, **env):
+        return subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "sleep" / "sleep_hook.py"), event],
+                              input=payload if isinstance(payload, str) else json.dumps(payload),
+                              capture_output=True, text=True, env={**os.environ, **env})
+
+    def test_cli_entry_with_debug_logs_lengths_not_text(self):
+        self.run_cli("prompt", {"session_id": "s1", "prompt": "/l3east:sleep"}, L3EAST_SLEEP_DEBUG="1")
+        res = self.run_cli("stop", {"session_id": "s1", "last_assistant_message": "x" * 500}, L3EAST_SLEEP_DEBUG="1")
         self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(json.loads(res.stdout)["decision"], "block")
+        log = (Path(self.tmp.name) / "l3east" / "sleep" / "debug.log").read_text()
+        self.assertIn("<500 chars>", log)
+        self.assertNotIn("x" * 100, log)
+
+    def test_cli_survives_bad_input_and_reports_handler_errors(self):
+        self.assertEqual(self.run_cli("stop", "[]").returncode, 0)
+        self.assertEqual(self.run_cli("stop", b"\xff".decode("latin-1")).returncode, 0)
+        self.state_file().parent.mkdir(parents=True)
+        self.state_file().mkdir()
+        res = self.run_cli("stop", {"session_id": "s1", "last_assistant_message": "x"})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("sleep", json.loads(res.stdout)["systemMessage"])
+
+    def test_bad_session_id_is_ignored(self):
         self.run_event("prompt", {"session_id": "../x", "prompt": "/l3east:sleep"})
         self.assertFalse((Path(self.tmp.name) / "l3east" / "sleep").exists())
+
+    def test_hooks_json_wires_every_event_to_the_script(self):
+        hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+        wired = {ev: h["hooks"][0]["command"] for ev, (h,) in hooks.items()}
+        self.assertEqual(set(wired), {"UserPromptSubmit", "Stop", "PreToolUse"})
+        for ev, arg in (("UserPromptSubmit", "prompt"), ("Stop", "stop"), ("PreToolUse", "pretool")):
+            self.assertTrue(wired[ev].endswith(f'scripts/sleep/sleep_hook.py" {arg}'), wired[ev])
+        self.assertEqual(hooks["PreToolUse"][0]["matcher"], "AskUserQuestion|Bash")
 
 
 if __name__ == "__main__":
