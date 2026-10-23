@@ -29,7 +29,8 @@ Follow this checklist, using Bash / Read tools where appropriate:
    - If there are uncommitted changes:
      - ask me whether to stop (so I can run `/commit`), or proceed with push-only for already committed work.
    - If the `pstack:deslop` skill is available, run it over the branch diff against its base before pushing.
-     - If it changes files, stop and show me what it removed, so the cleanup lands in its own commit first.
+     - If it changes files and I granted autonomy at the start of this task: run the repo's own check (lint, typecheck or tests, whichever it has) on the cleaned tree. If it passes, commit only those files as their own commit (`chore: deslop <scope>`), list what it removed in one line per file, and continue. If the check fails, revert the cleanup and continue with the original commits.
+     - If it changes files and there is no grant: stop and show me what it removed, so the cleanup lands in its own commit first.
 
 1b. **Pre-push review (sized)**
 
@@ -261,6 +262,16 @@ Follow this checklist, using Bash / Read tools where appropriate:
 
      - Always show me the title and body first, and ask for explicit confirmation before running any `gh pr` command.
      - Skip that confirmation only when I said at the start of this task that you may handle it yourself.
+
+9. **Babysit the new PR (autonomy grant only)**
+
+   - Run this only when I granted autonomy at the start of this task and step 8 opened a PR. Without a grant, end the flow after the PR is open.
+   - In the Claude desktop app, when the app offers Auto-fix for this PR, turn it on instead of starting a loop. The app already watches CI, conflicts and review comments, so a second watcher would fight it.
+   - Otherwise, if the `pstack:babysit` skill is available, start it on this PR as a background loop and keep it running until the PR is merge-ready: checks green, review comments handled, and the branch merges cleanly.
+   - It stops early on babysit's own stop rules: three fix rounds that are still not green, or a fix that needs a design choice. Report what is left.
+   - Fixes go to this PR's branch only. Never merge, never force-push, never rebase from inside the babysit.
+   - Replies to reviewers reach real people. Draft them and list them at the end for my approval, per my CLAUDE.md Messages rule.
+   - When it reaches merge-ready, tell me it is ready to merge and stop. I merge.
 
 ---
 
